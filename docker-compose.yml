@@ -12,3 +12,4 @@ services:
       - .env
     volumes:
       - ${DATA_PATH:-./data}:/app/data
+      - ${MENSAJE_PATH:-../evolution-manager-v2/mensaje}:/app/data/mensaje
