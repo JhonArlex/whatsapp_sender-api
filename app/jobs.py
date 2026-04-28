@@ -112,7 +112,7 @@ class JobManager:
                     self._running_id = None
 
     def _execute_sends(self, job_id: str) -> None:
-        from app.paths import load_message_bundle
+        from app.paths import load_message_bundle, resolve_csv_path
 
         job = self._jobs[job_id]
         try:
@@ -129,10 +129,11 @@ class JobManager:
             job.finalizado = datetime.now(timezone.utc)
             return
 
-        path = settings.csv_path
-        if not path.is_file():
+        try:
+            path = resolve_csv_path()
+        except FileNotFoundError as e:
             job.state = JobState.error
-            job.mensaje_error = f"No existe el CSV: {path}"
+            job.mensaje_error = str(e)
             job.finalizado = datetime.now(timezone.utc)
             return
 

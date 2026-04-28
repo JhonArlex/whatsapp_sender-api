@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     service_api_key: str = Field(default="", validation_alias="SERVICE_API_KEY")
 
     data_dir: Path = Field(default=Path("/app/data"), validation_alias="DATA_DIR")
+    # Coincide con COPY en Dockerfile (Dokploy / volumen vacío cuando no hay msg en data/)
+    default_data_dir: Path = Field(default=Path("/opt/default-data"), validation_alias="DEFAULT_DATA_DIR")
     csv_name: str = Field(default="grupos_chinatowm.csv", validation_alias="CSV_FILENAME")
     msg_dir: str | None = Field(default=None, validation_alias="MSG_DIR")
 
