@@ -72,9 +72,13 @@ def send_to_group(
     headers_ok: dict[str, str] | None = None
     last_err = ""
 
+    # Primer POST exitoso establece Origin/CORS válido para el resto
+    first_probe = imagenes[0]
+    caption_first = texto if len(imagenes) == 1 else ""
+
     for origin in rounds:
         hdrs_try = _merge_cors_headers(headers_base, origin)
-        status, resp = post_image(hdrs_try, imagenes[0], caption=texto)
+        status, resp = post_image(hdrs_try, first_probe, caption=caption_first)
         if status == 201:
             headers_ok = hdrs_try
             break
@@ -86,11 +90,15 @@ def send_to_group(
         return False, last_err or "Sin respuesta de Evolution."
 
     if len(imagenes) > 1:
-        for img in imagenes[1:]:
+        for img in imagenes[1:-1]:
             st, resp2 = post_image(headers_ok, img, caption="")
             if st != 201:
                 return False, _error_message(st, resp2) or f"Imagen adicional {img.name}"
             time.sleep(extra_delay)
+        st, resp2 = post_image(headers_ok, imagenes[-1], caption=texto)
+        if st != 201:
+            return False, _error_message(st, resp2) or f"Última imagen {imagenes[-1].name}"
+        time.sleep(extra_delay)
 
     return True, None
 
