@@ -6,6 +6,6 @@ __pycache__/
 data/*
 !data/.gitkeep
 !data/mensaje/
-!data/mensaje/.gitkeep
+!data/mensaje/**
 # CSV de grupos (versionar si el despliegue lo requiere; contiene datos sensibles)
 !data/grupos_chinatowm.csv
