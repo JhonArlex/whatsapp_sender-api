@@ -1,6 +1,11 @@
 # Solo la API. Ejecutar desde la raíz de este repositorio (bulk-sender-api/).
 # Por defecto se monta ./data del repo → /app/data en el contenedor.
 # docker compose up -d --build
+#
+# env_file: todas las variables de app/config.py entran por el .env (EVOLUTION_*,
+# EVOLUTION_REQUEST_ORIGIN, SERVICE_API_KEY, CORS_ORIGINS, DATA_DIR, etc.).
+# Copiá .env.example → .env en esta carpeta. Para otro nombre/ruta:
+#   BULK_API_ENV_FILE=/ruta/a/tu.env docker compose up -d
 
 services:
   api:
@@ -10,6 +15,6 @@ services:
     ports:
       - "${BULK_API_PORT:-8010}:8010"
     env_file:
-      - .env
+      - ${BULK_API_ENV_FILE:-.env}
     volumes:
       - ${DATA_PATH:-./data}:/app/data

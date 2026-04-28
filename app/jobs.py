@@ -165,7 +165,8 @@ class JobManager:
         ]
 
         base_url = settings.evolution_api_url.rstrip("/")
-        headers = {"apikey": settings.evolution_api_key, "Content-Type": "application/json"}
+        headers_base: dict[str, str] = {"apikey": settings.evolution_api_key, "Content-Type": "application/json"}
+        origin_candidates = settings.evolution_request_origins_list
 
         for idx, (fila, gid, nombre) in enumerate(grupos):
             if self._cancel_event.is_set():
@@ -181,7 +182,8 @@ class JobManager:
                 ok, detalle = send_to_group(
                     base_url=base_url,
                     instance=settings.instance,
-                    headers=headers,
+                    headers_base=headers_base,
+                    origin_candidates=origin_candidates,
                     number=gid,
                     texto=texto,
                     imagenes=imagenes,

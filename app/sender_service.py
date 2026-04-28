@@ -1,15 +1,39 @@
 """Envío vía Evolution API (sendMedia)."""
 
 import base64
+import time
 from pathlib import Path
 
 import requests
 
 
+def _merge_cors_headers(headers_base: dict[str, str], origin: str | None) -> dict[str, str]:
+    h = {**headers_base}
+    if origin:
+        base = origin.rstrip("/")
+        h["Origin"] = base
+        h["Referer"] = base + "/"
+    return h
+
+
+def _evolution_cors_rejected(resp: dict) -> bool:
+    for key in ("message",):
+        m = resp.get(key)
+        if isinstance(m, str) and "Not allowed by CORS" in m:
+            return True
+    inner = resp.get("response", {})
+    if isinstance(inner, dict):
+        m = inner.get("message")
+        if isinstance(m, str) and "Not allowed by CORS" in m:
+            return True
+    return False
+
+
 def send_to_group(
     base_url: str,
     instance: str,
-    headers: dict[str, str],
+    headers_base: dict[str, str],
+    origin_candidates: list[str],
     number: str,
     texto: str,
     imagenes: list[Path],
@@ -17,12 +41,13 @@ def send_to_group(
 ) -> tuple[bool, str | None]:
     """
     Devuelve (éxito, detalle_error).
+    Evolution aplica cors() a todas las rutas; sin Origin válido ante CORS_ORIGIN,
+    suele responder 500. Si ves CORS tras un intento, reintenta con otros orígenes
+    (lista en EVOLUTION_REQUEST_ORIGIN separada por comas).
     """
-    import time
-
     url = f"{base_url}/message/sendMedia/{instance}"
 
-    def post_image(path: Path, caption: str) -> tuple[int, dict]:
+    def post_image(hdrs: dict[str, str], path: Path, caption: str) -> tuple[int, dict]:
         with open(path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
         payload = {
@@ -33,23 +58,39 @@ def send_to_group(
             "fileName": path.name,
             "caption": caption,
         }
-        r = requests.post(url, headers=headers, json=payload, timeout=120)
+        r = requests.post(url, headers=hdrs, json=payload, timeout=120)
         try:
             body = r.json()
         except Exception:
             body = {"raw": r.text[:500]}
         return r.status_code, body
 
-    status, resp = post_image(imagenes[0], caption=texto)
-    if status != 201:
-        msg = _error_message(status, resp)
-        return False, msg
+    rounds: list[str | None] = (
+        [*origin_candidates] if origin_candidates else [None]
+    )
 
-    for img in imagenes[1:]:
-        st, resp2 = post_image(img, caption="")
-        if st != 201:
-            return False, _error_message(st, resp2) or f"Imagen adicional {img.name}"
-        time.sleep(extra_delay)
+    headers_ok: dict[str, str] | None = None
+    last_err = ""
+
+    for origin in rounds:
+        hdrs_try = _merge_cors_headers(headers_base, origin)
+        status, resp = post_image(hdrs_try, imagenes[0], caption=texto)
+        if status == 201:
+            headers_ok = hdrs_try
+            break
+        last_err = _error_message(status, resp)
+        if not _evolution_cors_rejected(resp) or origin == rounds[-1]:
+            return False, last_err
+
+    if headers_ok is None:
+        return False, last_err or "Sin respuesta de Evolution."
+
+    if len(imagenes) > 1:
+        for img in imagenes[1:]:
+            st, resp2 = post_image(headers_ok, img, caption="")
+            if st != 201:
+                return False, _error_message(st, resp2) or f"Imagen adicional {img.name}"
+            time.sleep(extra_delay)
 
     return True, None
 

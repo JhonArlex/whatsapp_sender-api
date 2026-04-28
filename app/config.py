@@ -19,11 +19,21 @@ class Settings(BaseSettings):
     evolution_api_url: str = Field(default="http://localhost:8080", validation_alias="EVOLUTION_API_URL")
     evolution_api_key: str = Field(default="", validation_alias="EVOLUTION_API_KEY")
     instance: str = Field(default="default", validation_alias="EVOLUTION_INSTANCE")
+    # Debe coincidir con uno de los orígenes permitidos en Evolution (CORS_ORIGIN), p. ej.
+    # https://whatsapp.tu-dominio.com — sin esto, algunas versiones de Evolution responden 500
+    # "Not allowed by CORS" a peticiones servidor-servidor sin Origin permitido.
+    evolution_request_origin: str = Field(default="", validation_alias="EVOLUTION_REQUEST_ORIGIN")
 
     delay_seg: int = Field(default=8, validation_alias="DELAY_SEG")
     extra_image_delay: float = Field(default=2.0, validation_alias="EXTRA_IMAGE_DELAY")
 
     cors_origins: str = Field(default="", validation_alias="CORS_ORIGINS")
+
+    @property
+    def evolution_request_origins_list(self) -> list[str]:
+        """Orígenes a probar contra CORS en Evolution (split por coma, trim incluido)."""
+        raw = self.evolution_request_origin or ""
+        return [p.strip().rstrip("/") for p in raw.split(",") if p.strip()]
 
     @property
     def csv_path(self) -> Path:
