@@ -11,30 +11,51 @@ from pathlib import Path
 from app.config import settings
 
 
+def _image_paths(d: Path) -> list[Path]:
+    return sorted(d.glob("*.jpeg")) + sorted(d.glob("*.jpg"))
+
+
+def _bundle_ready(d: Path) -> bool:
+    """msg.txt + al menos una imagen (evita elegir volumen incompleto: solo msg.txt)."""
+    return (d / "msg.txt").is_file() and len(_image_paths(d)) > 0
+
+
 def resolve_msg_dir() -> Path:
     if settings.msg_dir:
         p = Path(settings.msg_dir)
         if not p.is_dir():
             raise FileNotFoundError(f"MSG_DIR no existe: {p}")
-        if not (p / "msg.txt").is_file():
-            raise FileNotFoundError(f"Falta {p}/msg.txt")
+        if not _bundle_ready(p):
+            raise FileNotFoundError(
+                f"Mensaje incompleto en {p}: se requiere msg.txt y al menos un .jpg o .jpeg"
+            )
         return p
 
     dd = settings.data_dir
     fb = settings.default_data_dir / "mensaje"
-
     nested = dd / "mensaje"
-    if (nested / "msg.txt").is_file():
+
+    # Preferir bundle completo; si el volumen solo tiene msg.txt, usar default embebido.
+    if _bundle_ready(nested):
         return nested
-    if (dd / "msg.txt").is_file():
+    if _bundle_ready(dd):
         return dd
-    if (fb / "msg.txt").is_file():
+    if _bundle_ready(fb):
         return fb
 
+    if (nested / "msg.txt").is_file() and not _image_paths(nested):
+        raise FileNotFoundError(
+            f"Incompleto: {nested} tiene msg.txt pero no hay imágenes. "
+            f"Añade .jpg/.jpeg ahí o despliega imagen con datos en {fb}."
+        )
+    if (dd / "msg.txt").is_file() and not _image_paths(dd):
+        raise FileNotFoundError(
+            f"Incompleto: {dd} tiene msg.txt pero no hay imágenes junto a él."
+        )
+
     raise FileNotFoundError(
-        f"No hay msg.txt en {dd} ni en {fb}. "
-        "Coloca data/mensaje/msg.txt en el volumen, define MSG_DIR, "
-        "o despliega imagen con default-data (Dockerfile COPY data)."
+        f"No hay bundle de mensaje (msg.txt + imágenes) en {dd} ni en {fb}. "
+        "Coloca data/mensaje/, define MSG_DIR, o build Docker con COPY data."
     )
 
 
@@ -50,14 +71,11 @@ def resolve_csv_path() -> Path:
 
 
 def load_message_bundle():
-    """Texto + lista de imágenes."""
+    """Texto + lista de imágenes (rutas verificadas)."""
     msg_dir = resolve_msg_dir()
     msg_path = msg_dir / "msg.txt"
-    if not msg_path.is_file():
-        raise FileNotFoundError(f"Falta {msg_path}")
-
     texto = msg_path.read_text(encoding="utf-8").strip()
-    imagenes = sorted(msg_dir.glob("*.jpeg")) + sorted(msg_dir.glob("*.jpg"))
+    imagenes = [p for p in _image_paths(msg_dir) if p.is_file()]
     if not imagenes:
-        raise FileNotFoundError(f"No hay .jpg/.jpeg en {msg_dir}")
+        raise FileNotFoundError(f"No hay .jpg/.jpeg legibles en {msg_dir}")
     return texto, imagenes, msg_dir
