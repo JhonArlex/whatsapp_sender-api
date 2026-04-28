@@ -82,6 +82,18 @@ def estado_envio(
     return job.to_dict()
 
 
+@app.post("/api/v1/envios/cancelar")
+def cancelar_envio(
+    _: None = Depends(require_service_key),
+) -> dict:
+    """Detiene el envío masivo en curso (entre un grupo y el siguiente)."""
+    hubo = jobs.cancelar_envio_actual()
+    return {
+        "ok": hubo,
+        "mensaje": "Envío detenido." if hubo else "No había ningún envío activo.",
+    }
+
+
 @app.get("/api/v1/envios")
 def listar_ultimos(
     _: None = Depends(require_service_key),

@@ -17,6 +17,7 @@ class JobState(str, Enum):
     pendiente = "pendiente"
     ejecutando = "ejecutando"
     completado = "completado"
+    cancelado = "cancelado"
     error = "error"
 
 
@@ -77,6 +78,7 @@ class JobManager:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._running_id: str | None = None
+        self._cancel_event = threading.Event()
 
     def list_job_ids(self, limit: int = 20) -> list[str]:
         with self._lock:
@@ -94,6 +96,7 @@ class JobManager:
         with self._lock:
             if self._running_id is not None:
                 return None
+            self._cancel_event.clear()
             job = Job(id=str(uuid.uuid4()), desde=max(1, desde))
             self._jobs[job.id] = job
             self._running_id = job.id
@@ -102,6 +105,17 @@ class JobManager:
         t = threading.Thread(target=self._run_job, args=(job.id,), daemon=True)
         t.start()
         return job
+
+    def cancelar_envio_actual(self) -> bool:
+        """
+        Pide parar el lote en curso (hilo daemon). Devuelve True si había un envío activo.
+        El envío se marca como cancelado al salir del bucle entre grupos o tras el envío actual.
+        """
+        with self._lock:
+            if self._running_id is None:
+                return False
+        self._cancel_event.set()
+        return True
 
     def _run_job(self, job_id: str) -> None:
         try:
@@ -154,6 +168,12 @@ class JobManager:
         headers = {"apikey": settings.evolution_api_key, "Content-Type": "application/json"}
 
         for idx, (fila, gid, nombre) in enumerate(grupos):
+            if self._cancel_event.is_set():
+                job.state = JobState.cancelado
+                job.nombre_actual = None
+                job.finalizado = datetime.now(timezone.utc)
+                return
+
             job.nombre_actual = nombre[:120] if nombre else None
             res = job.resultados[idx]
 
@@ -183,6 +203,11 @@ class JobManager:
             job.procesados += 1
             if idx < len(grupos) - 1:
                 time.sleep(settings.delay_seg)
+                if self._cancel_event.is_set():
+                    job.state = JobState.cancelado
+                    job.nombre_actual = None
+                    job.finalizado = datetime.now(timezone.utc)
+                    return
 
         job.state = JobState.completado
         job.nombre_actual = None
