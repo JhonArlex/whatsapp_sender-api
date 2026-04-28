@@ -1,0 +1,14 @@
+# Solo la API. Copia .env.example a .env al lado de este archivo.
+# docker compose up -d --build
+
+services:
+  api:
+    build: .
+    container_name: bulk-sender-api
+    restart: unless-stopped
+    ports:
+      - "${BULK_API_PORT:-8010}:8010"
+    env_file:
+      - .env
+    volumes:
+      - ${DATA_PATH:-./data}:/app/data
