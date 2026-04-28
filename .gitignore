@@ -2,3 +2,8 @@
 .env
 __pycache__/
 *.pyc
+# Contenido sensible en data/; solo se versiona la estructura con .gitkeep
+data/*
+!data/.gitkeep
+!data/mensaje/
+!data/mensaje/.gitkeep

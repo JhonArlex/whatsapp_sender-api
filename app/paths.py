@@ -1,4 +1,8 @@
-"""Resolución de carpetas de mensaje (msg.txt + imágenes)."""
+"""Resolución de carpetas de mensaje (msg.txt + imágenes).
+
+En Docker, DATA_DIR es /app/data (volumen desde el host: típicamente <repo bulk-sender-api>/data).
+Mensaje: /app/data/mensaje/ o msg.txt en la raíz de /app/data. Ver bulk-sender-api/.env.example.
+"""
 
 from pathlib import Path
 

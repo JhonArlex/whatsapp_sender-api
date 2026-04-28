@@ -1,4 +1,5 @@
-# Solo la API. Copia .env.example a .env al lado de este archivo.
+# Solo la API. Ejecutar desde la raíz de este repositorio (bulk-sender-api/).
+# Por defecto se monta ./data del repo → /app/data en el contenedor.
 # docker compose up -d --build
 
 services:
@@ -12,4 +13,3 @@ services:
       - .env
     volumes:
       - ${DATA_PATH:-./data}:/app/data
-      - ${MENSAJE_PATH:-../evolution-manager-v2/mensaje}:/app/data/mensaje
