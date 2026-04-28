@@ -13,14 +13,21 @@ app = FastAPI(
     version="1.0.0",
 )
 
-if settings.cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+# CORS: si CORS_ORIGINS está vacío, se permite cualquier origen (sin credenciales de cookie).
+# En producción conviene fijar CORS_ORIGINS=https://tu-ui.com para restringir orígenes.
+_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+_allow_credentials = True
+if not _origins:
+    _origins = ["*"]
+    _allow_credentials = False
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=_allow_credentials,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def require_service_key(x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None) -> None:
