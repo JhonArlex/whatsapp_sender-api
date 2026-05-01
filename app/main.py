@@ -6,6 +6,14 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.jobs import jobs
+from app.schedule_models import (
+    CreateScheduleRequest,
+    HistoryResponse,
+    Schedule,
+    ScheduleHistory,
+    ScheduleResponse,
+)
+from app.scheduler import start_scheduler, store
 
 app = FastAPI(
     title="Bulk Sender API",
@@ -28,6 +36,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Arrancar scheduler en background ────────────────────────────────────────
+
+
+@app.on_event("startup")
+def startup_scheduler():
+    start_scheduler()
+
 
 
 def require_service_key(x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None) -> None:
@@ -100,3 +117,84 @@ def listar_ultimos(
 ) -> dict:
     """Ids conocidos en memoria (reiniciar el proceso borra el historial)."""
     return {"job_ids": jobs.list_job_ids(20)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Endpoints de Programación (Schedules)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.post("/api/v1/schedules", response_model=Schedule)
+def crear_schedule(
+    body: CreateScheduleRequest,
+    _: None = Depends(require_service_key),
+) -> Schedule:
+    schedules = store.load_schedules()
+
+    # Validar días de semana
+    valid_dias = {"lun", "mar", "mie", "jue", "vie", "sab", "dom"}
+    for d in body.dias_semana:
+        if d.lower() not in valid_dias:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Día inválido: {d}. Usa: lun,mar,mie,jue,vie,sab,dom",
+            )
+
+    sch = Schedule(
+        hora=body.hora,
+        dias_semana=[d.lower() for d in body.dias_semana],
+        desde_fila=body.desde_fila,
+    )
+    schedules.append(sch.model_dump(mode="json"))
+    store.save_schedules(schedules)
+    return sch
+
+
+@app.get("/api/v1/schedules", response_model=ScheduleResponse)
+def listar_schedules(
+    _: None = Depends(require_service_key),
+) -> ScheduleResponse:
+    raw = store.load_schedules()
+    return ScheduleResponse(schedules=[Schedule(**s) for s in raw])
+
+
+@app.delete("/api/v1/schedules/{schedule_id}")
+def eliminar_schedule(
+    schedule_id: str,
+    _: None = Depends(require_service_key),
+) -> dict:
+    schedules = store.load_schedules()
+    before = len(schedules)
+    schedules = [s for s in schedules if s.get("id") != schedule_id]
+    if len(schedules) == before:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Schedule no encontrado",
+        )
+    store.save_schedules(schedules)
+    return {"ok": True}
+
+
+@app.put("/api/v1/schedules/{schedule_id}/toggle")
+def toggle_schedule(
+    schedule_id: str,
+    _: None = Depends(require_service_key),
+) -> dict:
+    schedules = store.load_schedules()
+    for s in schedules:
+        if s.get("id") == schedule_id:
+            s["activo"] = not s.get("activo", True)
+            store.save_schedules(schedules)
+            return {"ok": True, "activo": s["activo"]}
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Schedule no encontrado",
+    )
+
+
+@app.get("/api/v1/schedules/history", response_model=HistoryResponse)
+def historial_schedules(
+    _: None = Depends(require_service_key),
+) -> HistoryResponse:
+    raw = store.load_history()
+    return HistoryResponse(history=[ScheduleHistory(**h) for h in raw])

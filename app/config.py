@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     delay_seg: int = Field(default=8, validation_alias="DELAY_SEG")
     extra_image_delay: float = Field(default=2.0, validation_alias="EXTRA_IMAGE_DELAY")
 
+    scheduler_check_interval: int = Field(default=30, validation_alias="SCHEDULER_CHECK_INTERVAL")
+
     cors_origins: str = Field(default="", validation_alias="CORS_ORIGINS")
 
     @property
