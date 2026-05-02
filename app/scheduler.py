@@ -9,12 +9,16 @@ from __future__ import annotations
 import json
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.jobs import jobs
+
+# Zona horaria objetivo (Santiago de Chile por defecto)
+TZ = ZoneInfo(settings.timezone)
 
 # Mapa de nombres cortos → weekday() (0=lunes, 6=domingo)
 DIAS_MAP = {
@@ -53,11 +57,16 @@ def _save_json(path: Path, data: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _ahora_en_tz() -> datetime:
+    """Devuelve el datetime actual en la zona horaria configurada."""
+    return datetime.now(TZ)
+
+
 def _hoy_es_dia_valido(dias_semana: list[str]) -> bool:
     """True si hoy está en la lista, o si la lista está vacía (todos los días)."""
     if not dias_semana:
         return True
-    hoy = datetime.now(timezone.utc).weekday()  # 0=lunes
+    hoy = _ahora_en_tz().weekday()  # 0=lunes
     return any(DIAS_MAP.get(d.lower()) == hoy for d in dias_semana)
 
 
@@ -104,7 +113,7 @@ def _check_and_fire(sch: dict[str, Any]) -> bool:
     if not hora or ":" not in hora:
         return False
 
-    ahora = datetime.now(timezone.utc)
+    ahora = _ahora_en_tz()
     ahora_hhmm = f"{ahora.hour:02d}:{ahora.minute:02d}"
 
     if ahora_hhmm != hora:
@@ -161,9 +170,41 @@ def _check_and_fire(sch: dict[str, Any]) -> bool:
     return job is not None
 
 
+def _update_historicos() -> None:
+    """
+    Revisa entradas del historial con estado 'ejecutando' y,
+    si el job ya terminó (completado/error/cancelado), actualiza el estado.
+    """
+    history = store.load_history()
+    modified = False
+    for entry in history:
+        if entry.get("estado") != "ejecutando":
+            continue
+        job_id = entry.get("job_id")
+        if not job_id:
+            continue
+        job = jobs.get(job_id)
+        if job is None:
+            continue
+        if job.state.value not in ("ejecutando", "pendiente"):
+            entry["estado"] = job.state.value
+            entry["detalle"] = (
+                job.mensaje_error
+                or f"{job.ok} enviados, {job.errores} fallidos de {job.total}"
+            )
+            entry["finalizado_en"] = (
+                job.finalizado.isoformat() if job.finalizado else None
+            )
+            modified = True
+    if modified:
+        store.save_history(history)
+
+
 def scheduler_loop() -> None:
     """Loop principal del scheduler (corre en un thread daemon)."""
     interval = getattr(settings, "scheduler_check_interval", 30)
+    history_poll = getattr(settings, "scheduler_history_poll", 15)
+    ticks = 0
     while True:
         try:
             schedules = store.load_schedules()
@@ -172,6 +213,15 @@ def scheduler_loop() -> None:
                     _check_and_fire(sch)
                 except Exception:
                     pass  # No dejar que un schedule malo mate el loop
+
+            # Actualizar historial cada 'history_poll' segundos
+            ticks += interval
+            if ticks >= history_poll:
+                try:
+                    _update_historicos()
+                except Exception:
+                    pass
+                ticks = 0
         except Exception:
             pass
         time.sleep(interval)

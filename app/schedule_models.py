@@ -33,8 +33,9 @@ class ScheduleHistory(BaseModel):
     ejecutado_en: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+    finalizado_en: str | None = None
     job_id: str | None = None
-    estado: str = "pendiente"  # pendiente | ejecutando | completado | error
+    estado: str = "pendiente"  # pendiente | ejecutando | completado | cancelado | error
     detalle: str | None = None
 
 

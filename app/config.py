@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     extra_image_delay: float = Field(default=2.0, validation_alias="EXTRA_IMAGE_DELAY")
 
     scheduler_check_interval: int = Field(default=30, validation_alias="SCHEDULER_CHECK_INTERVAL")
+    scheduler_history_poll: int = Field(default=15, validation_alias="SCHEDULER_HISTORY_POLL")
+
+    timezone: str = Field(default="America/Santiago", validation_alias="TIMEZONE")
 
     cors_origins: str = Field(default="", validation_alias="CORS_ORIGINS")
 
