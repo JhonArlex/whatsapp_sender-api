@@ -37,7 +37,10 @@ class Settings(BaseSettings):
 
     timezone: str = Field(default="America/Santiago", validation_alias="TIMEZONE")
 
-    cors_origins: str = Field(default="", validation_alias="CORS_ORIGINS")
+    cors_origins: str = Field(
+        default="https://sender.jhonocampo.com",
+        validation_alias="CORS_ORIGINS",
+    )
 
     @property
     def evolution_request_origins_list(self) -> list[str]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Any, Generator
 
@@ -10,6 +11,8 @@ import psycopg2.extras
 import psycopg2.pool
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
@@ -40,19 +43,27 @@ def get_conn() -> Generator[psycopg2.extensions.connection, None, None]:
 
 
 def query(sql: str, params: tuple | None = None) -> list[dict[str, Any]]:
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, params)
-            try:
-                return [dict(row) for row in cur.fetchall()]
-            except psycopg2.ProgrammingError:
-                return []
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, params)
+                try:
+                    return [dict(row) for row in cur.fetchall()]
+                except psycopg2.ProgrammingError:
+                    return []
+    except psycopg2.Error:
+        logger.exception("Fallo en query SQL")
+        raise
 
 
 def execute(sql: str, params: tuple | None = None) -> None:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+    except psycopg2.Error:
+        logger.exception("Fallo en execute SQL")
+        raise
 
 
 @contextmanager

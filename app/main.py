@@ -1,12 +1,15 @@
 import json
+import logging
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
 from app import db
+from app.cors_utils import cors_headers_for_request
 from app.db import validate_token
 from app.jobs import jobs
 from app.schedule_models import (
@@ -18,14 +21,20 @@ from app.schedule_models import (
 )
 from app.scheduler import start_scheduler, store
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="Bulk Sender API",
     description="Inicia envíos masivos a grupos (Evolution API) y consulta progreso.",
     version="1.0.0",
 )
 
-# CORS: si CORS_ORIGINS está vacío, se permite cualquier origen (sin credenciales de cookie).
-# En producción conviene fijar CORS_ORIGINS=https://tu-ui.com para restringir orígenes.
+# CORS: CORS_ORIGINS en .env (coma-separado). Por defecto el dashboard en sender.jhonocampo.com.
 _origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 _allow_credentials = True
 if not _origins:
@@ -36,9 +45,20 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
     allow_credentials=_allow_credentials,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Evita 500 en texto plano sin CORS; deja el detalle en logs."""
+    logger.exception("Error no manejado: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Error interno del servidor"},
+        headers=cors_headers_for_request(request, settings.cors_origins),
+    )
 
 
 # ── Arrancar scheduler en background ────────────────────────────────────────
