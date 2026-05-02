@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Schedule(BaseModel):
@@ -28,7 +28,8 @@ class ScheduleHistory(BaseModel):
     """Registro de una ejecución automática del scheduler."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    schedule_id: str | None = None  # nullable: ON DELETE SET NULL
+    # Vacío cuando el schedule fue borrado (NULL en BD por ON DELETE SET NULL)
+    schedule_id: str = ""
     hora_programada: str
     ejecutado_en: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -37,6 +38,13 @@ class ScheduleHistory(BaseModel):
     job_id: str | None = None
     estado: str = "pendiente"  # pendiente | ejecutando | completado | cancelado | error
     detalle: str | None = None
+
+    @field_validator("schedule_id", mode="before")
+    @classmethod
+    def _schedule_id_none_to_empty(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        return v if isinstance(v, str) else str(v)
 
 
 # ── DTOs para la API ──────────────────────────────────────────────────────────

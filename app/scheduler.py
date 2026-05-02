@@ -63,6 +63,8 @@ def _row_to_history(row: dict[str, Any]) -> dict[str, Any]:
         val = result.get(key)
         if val is not None and not isinstance(val, str):
             result[key] = str(val)
+    if result.get("schedule_id") is None:
+        result["schedule_id"] = ""
     hp = result.get("hora_programada")
     if isinstance(hp, dt_time):
         result["hora_programada"] = hp.strftime("%H:%M")
