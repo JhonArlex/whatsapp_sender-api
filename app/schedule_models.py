@@ -28,7 +28,7 @@ class ScheduleHistory(BaseModel):
     """Registro de una ejecución automática del scheduler."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    schedule_id: str
+    schedule_id: str | None = None  # nullable: ON DELETE SET NULL
     hora_programada: str
     ejecutado_en: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
