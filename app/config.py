@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     # Protege los endpoints del servicio (obligatorio en producción)
     service_api_key: str = Field(default="", validation_alias="SERVICE_API_KEY")
 
+    database_url: str = Field(
+        default="postgresql://jhonocampo:yMSHGswzRNiu7DmzJ8zN@164.68.109.125:5434/WhatsappSender",
+        validation_alias="DATABASE_URL",
+    )
+
     data_dir: Path = Field(default=Path("/app/data"), validation_alias="DATA_DIR")
     # Coincide con COPY en Dockerfile (Dokploy / volumen vacío cuando no hay msg en data/)
     default_data_dir: Path = Field(default=Path("/opt/default-data"), validation_alias="DEFAULT_DATA_DIR")

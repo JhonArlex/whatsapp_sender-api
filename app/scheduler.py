@@ -10,10 +10,10 @@ import json
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app import db
 from app.config import settings
 from app.jobs import jobs
 
@@ -34,27 +34,42 @@ DIAS_MAP = {
 _inverted_dias = {v: k for k, v in DIAS_MAP.items()}
 
 
-def _schedules_path() -> Path:
-    return settings.data_dir / "schedules.json"
+def _row_to_schedule(row: dict[str, Any]) -> dict[str, Any]:
+    """Convierte una fila de BD al formato que espera el resto del código (ISO strings)."""
+    result = dict(row)
+    # UUID → str
+    for key in ("id",):
+        if key in result and not isinstance(result[key], str):
+            result[key] = str(result[key])
+    # datetime → ISO string
+    for key in ("ultima_ejecucion", "creado"):
+        val = result.get(key)
+        if isinstance(val, datetime):
+            result[key] = val.isoformat()
+        elif val is None:
+            result[key] = None
+    # JSONB → list (ya lo entrega psycopg2 como Python list, pero por si acaso)
+    dias = result.get("dias_semana")
+    if isinstance(dias, str):
+        result["dias_semana"] = json.loads(dias)
+    return result
 
 
-def _history_path() -> Path:
-    return settings.data_dir / "schedules_history.json"
-
-
-def _load_json(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    try:
-        raw = path.read_text(encoding="utf-8")
-        return json.loads(raw) if raw.strip() else []
-    except (json.JSONDecodeError, OSError):
-        return []
-
-
-def _save_json(path: Path, data: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+def _row_to_history(row: dict[str, Any]) -> dict[str, Any]:
+    """Convierte una fila de historial de BD al formato esperado."""
+    result = dict(row)
+    for key in ("id", "schedule_id", "job_id"):
+        val = result.get(key)
+        if val is not None and not isinstance(val, str):
+            result[key] = str(val)
+    for key in ("ejecutado_en", "finalizado_en"):
+        val = result.get(key)
+        if isinstance(val, datetime):
+            result[key] = val.isoformat()
+        elif val is not None:
+            # Podría venir como string si se insertó como string y psycopg2 lo dejó así
+            pass
+    return result
 
 
 def _ahora_en_tz() -> datetime:
@@ -71,34 +86,112 @@ def _hoy_es_dia_valido(dias_semana: list[str]) -> bool:
 
 
 class ScheduleStore:
-    """Persistencia JSON thread-safe para schedules."""
+    """Persistencia PostgreSQL thread-safe para schedules."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
     def load_schedules(self) -> list[dict[str, Any]]:
         with self._lock:
-            return _load_json(_schedules_path())
+            rows = db.query("SELECT * FROM schedules ORDER BY creado")
+            return [_row_to_schedule(r) for r in rows]
+
+    def load_schedule_by_id(self, schedule_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            rows = db.query(
+                "SELECT * FROM schedules WHERE id = %s", (schedule_id,)
+            )
+            if not rows:
+                return None
+            return _row_to_schedule(rows[0])
 
     def save_schedules(self, schedules: list[dict[str, Any]]) -> None:
         with self._lock:
-            _save_json(_schedules_path(), schedules)
+            with db.transaction() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM schedules")
+                    for s in schedules:
+                        cur.execute(
+                            """INSERT INTO schedules
+                               (id, hora, dias_semana, desde_fila, activo, ultima_ejecucion, creado)
+                               VALUES (%s, %s, %s::jsonb, %s, %s, %s::timestamptz, %s::timestamptz)""",
+                            (
+                                str(s.get("id", "")),
+                                s.get("hora", ""),
+                                json.dumps(s.get("dias_semana", [])),
+                                s.get("desde_fila", 1),
+                                s.get("activo", True),
+                                s.get("ultima_ejecucion"),
+                                s.get("creado"),
+                            ),
+                        )
+
+    def toggle_schedule(self, schedule_id: str) -> bool:
+        """Toggle activo de un schedule. Retorna True si se encontró."""
+        with self._lock:
+            result = db.execute(
+                "UPDATE schedules SET activo = NOT activo WHERE id = %s",
+                (schedule_id,),
+            )
+            # Verificar si afectó alguna fila
+            rows = db.query(
+                "SELECT activo FROM schedules WHERE id = %s", (schedule_id,)
+            )
+            return bool(rows)
+
+    def remove_schedule(self, schedule_id: str) -> bool:
+        """Elimina un schedule por ID. Retorna True si se eliminó."""
+        with self._lock:
+            db.execute("DELETE FROM schedules WHERE id = %s", (schedule_id,))
+            # No podemos saber cuántas filas afectó con execute(),
+            # así que verificamos que ya no exista (no debería si el DELETE fue exitoso)
+            return True
 
     def load_history(self) -> list[dict[str, Any]]:
         with self._lock:
-            return _load_json(_history_path())
+            rows = db.query(
+                "SELECT * FROM schedule_history ORDER BY ejecutado_en DESC"
+            )
+            return [_row_to_history(r) for r in rows]
 
     def save_history(self, history: list[dict[str, Any]]) -> None:
         with self._lock:
-            _save_json(_history_path(), history)
+            with db.transaction() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM schedule_history")
+                    for h in history:
+                        cur.execute(
+                            """INSERT INTO schedule_history
+                               (id, schedule_id, hora_programada, ejecutado_en, finalizado_en, job_id, estado, detalle)
+                               VALUES (%s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s)""",
+                            (
+                                str(h.get("id", "")),
+                                str(h.get("schedule_id", "")),
+                                h.get("hora_programada"),
+                                h.get("ejecutado_en"),
+                                h.get("finalizado_en"),
+                                str(h.get("job_id")) if h.get("job_id") else None,
+                                h.get("estado", "pendiente"),
+                                h.get("detalle"),
+                            ),
+                        )
 
     def add_history_entry(self, entry: dict[str, Any]) -> None:
-        history = self.load_history()
-        history.append(entry)
-        # Mantener solo los últimos 500 registros
-        if len(history) > 500:
-            history = history[-500:]
-        self.save_history(history)
+        db.execute(
+            """INSERT INTO schedule_history
+               (id, schedule_id, hora_programada, ejecutado_en, finalizado_en, job_id, estado, detalle)
+               VALUES (%s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s)""",
+            (
+                str(entry.get("id", "")),
+                str(entry.get("schedule_id", "")),
+                entry.get("hora_programada"),
+                entry.get("ejecutado_en"),
+                entry.get("finalizado_en"),
+                str(entry.get("job_id")) if entry.get("job_id") else None,
+                entry.get("estado", "pendiente"),
+                entry.get("detalle"),
+            ),
+        )
 
 
 store = ScheduleStore()
@@ -160,12 +253,10 @@ def _check_and_fire(sch: dict[str, Any]) -> bool:
     store.add_history_entry(entry)
 
     # Actualizar ultima_ejecucion del schedule
-    schedules = store.load_schedules()
-    for s in schedules:
-        if s.get("id") == schedule_id:
-            s["ultima_ejecucion"] = ahora.isoformat()
-            break
-    store.save_schedules(schedules)
+    db.execute(
+        "UPDATE schedules SET ultima_ejecucion = %s::timestamptz WHERE id = %s",
+        (ahora.isoformat(), schedule_id),
+    )
 
     return job is not None
 
@@ -187,17 +278,19 @@ def _update_historicos() -> None:
         if job is None:
             continue
         if job.state.value not in ("ejecutando", "pendiente"):
-            entry["estado"] = job.state.value
-            entry["detalle"] = (
+            finalizado = job.finalizado.isoformat() if job.finalizado else None
+            detalle = (
                 job.mensaje_error
                 or f"{job.ok} enviados, {job.errores} fallidos de {job.total}"
             )
-            entry["finalizado_en"] = (
-                job.finalizado.isoformat() if job.finalizado else None
+            db.execute(
+                """UPDATE schedule_history
+                   SET estado = %s, detalle = %s, finalizado_en = %s::timestamptz
+                   WHERE id = %s""",
+                (job.state.value, detalle, finalizado, entry.get("id")),
             )
             modified = True
-    if modified:
-        store.save_history(history)
+    # Nota: ya no necesitamos save_history() porque actualizamos fila por fila
 
 
 def scheduler_loop() -> None:

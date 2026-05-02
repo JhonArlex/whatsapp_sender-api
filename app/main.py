@@ -1,3 +1,4 @@
+import json
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -5,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app import db
+from app.db import validate_token
 from app.jobs import jobs
 from app.schedule_models import (
     CreateScheduleRequest,
@@ -48,11 +51,10 @@ def startup_scheduler():
 
 
 def require_service_key(x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None) -> None:
-    need = (settings.service_api_key or "").strip()
-    if not need:
-        return
-    if not x_api_key or x_api_key != need:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="X-API-Key inválida o faltante")
+    if not x_api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="X-API-Key faltante")
+    if not validate_token(x_api_key):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o inactivo")
 
 
 class IniciarBody(BaseModel):
@@ -129,8 +131,6 @@ def crear_schedule(
     body: CreateScheduleRequest,
     _: None = Depends(require_service_key),
 ) -> Schedule:
-    schedules = store.load_schedules()
-
     # Validar días de semana
     valid_dias = {"lun", "mar", "mie", "jue", "vie", "sab", "dom"}
     for d in body.dias_semana:
@@ -145,8 +145,21 @@ def crear_schedule(
         dias_semana=[d.lower() for d in body.dias_semana],
         desde_fila=body.desde_fila,
     )
-    schedules.append(sch.model_dump(mode="json"))
-    store.save_schedules(schedules)
+    data = sch.model_dump(mode="json")
+    # Insertar directamente en BD
+    db.execute(
+        """INSERT INTO schedules
+           (id, hora, dias_semana, desde_fila, activo, creado)
+           VALUES (%s, %s, %s::jsonb, %s, %s, %s::timestamptz)""",
+        (
+            str(data["id"]),
+            data["hora"],
+            json.dumps(data["dias_semana"]),
+            data["desde_fila"],
+            data["activo"],
+            data["creado"],
+        ),
+    )
     return sch
 
 
@@ -163,15 +176,14 @@ def eliminar_schedule(
     schedule_id: str,
     _: None = Depends(require_service_key),
 ) -> dict:
-    schedules = store.load_schedules()
-    before = len(schedules)
-    schedules = [s for s in schedules if s.get("id") != schedule_id]
-    if len(schedules) == before:
+    # Verificar que existe antes de borrar
+    exists = store.load_schedule_by_id(schedule_id)
+    if not exists:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Schedule no encontrado",
         )
-    store.save_schedules(schedules)
+    store.remove_schedule(schedule_id)
     return {"ok": True}
 
 
@@ -180,16 +192,17 @@ def toggle_schedule(
     schedule_id: str,
     _: None = Depends(require_service_key),
 ) -> dict:
-    schedules = store.load_schedules()
-    for s in schedules:
-        if s.get("id") == schedule_id:
-            s["activo"] = not s.get("activo", True)
-            store.save_schedules(schedules)
-            return {"ok": True, "activo": s["activo"]}
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Schedule no encontrado",
+    rows = db.query(
+        "SELECT activo FROM schedules WHERE id = %s", (schedule_id,)
     )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Schedule no encontrado",
+        )
+    store.toggle_schedule(schedule_id)
+    nuevo_activo = not rows[0]["activo"]
+    return {"ok": True, "activo": nuevo_activo}
 
 
 @app.get("/api/v1/schedules/history", response_model=HistoryResponse)
