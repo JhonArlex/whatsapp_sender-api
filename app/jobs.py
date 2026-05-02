@@ -26,7 +26,7 @@ class ResultadoFila:
     fila: int
     grupo_id: str
     nombre: str
-    estado: str  # ok | error | pendiente
+    estado: str  # pendiente | enviando | ok | error
     detalle: str | None = None
 
 
@@ -177,6 +177,8 @@ class JobManager:
 
             job.nombre_actual = nombre[:120] if nombre else None
             res = job.resultados[idx]
+            res.estado = "enviando"
+            res.detalle = None
 
             try:
                 ok, detalle = send_to_group(
