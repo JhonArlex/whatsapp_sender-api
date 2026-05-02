@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import threading
 import time
-from datetime import datetime, time
+from datetime import datetime
+from datetime import time as dt_time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -63,7 +64,7 @@ def _row_to_history(row: dict[str, Any]) -> dict[str, Any]:
         if val is not None and not isinstance(val, str):
             result[key] = str(val)
     hp = result.get("hora_programada")
-    if isinstance(hp, time):
+    if isinstance(hp, dt_time):
         result["hora_programada"] = hp.strftime("%H:%M")
     elif hp is not None and not isinstance(hp, str):
         result["hora_programada"] = str(hp)
