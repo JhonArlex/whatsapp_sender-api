@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     )
 
     data_dir: Path = Field(default=Path("/app/data"), validation_alias="DATA_DIR")
-    # Coincide con COPY en Dockerfile (Dokploy / volumen vacío cuando no hay msg en data/)
     default_data_dir: Path = Field(default=Path("/opt/default-data"), validation_alias="DEFAULT_DATA_DIR")
     csv_name: str = Field(default="grupos_chinatowm.csv", validation_alias="CSV_FILENAME")
     msg_dir: str | None = Field(default=None, validation_alias="MSG_DIR")
@@ -24,9 +23,6 @@ class Settings(BaseSettings):
     evolution_api_url: str = Field(default="http://localhost:8080", validation_alias="EVOLUTION_API_URL")
     evolution_api_key: str = Field(default="", validation_alias="EVOLUTION_API_KEY")
     instance: str = Field(default="default", validation_alias="EVOLUTION_INSTANCE")
-    # Debe coincidir con uno de los orígenes permitidos en Evolution (CORS_ORIGIN), p. ej.
-    # https://whatsapp.tu-dominio.com — sin esto, algunas versiones de Evolution responden 500
-    # "Not allowed by CORS" a peticiones servidor-servidor sin Origin permitido.
     evolution_request_origin: str = Field(default="", validation_alias="EVOLUTION_REQUEST_ORIGIN")
 
     delay_seg: int = Field(default=8, validation_alias="DELAY_SEG")
@@ -42,9 +38,20 @@ class Settings(BaseSettings):
         validation_alias="CORS_ORIGINS",
     )
 
+    # JWT Config
+    jwt_secret: str = Field(default="super-secret-key-change-in-production", validation_alias="JWT_SECRET")
+    jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
+    access_token_expire_minutes: int = Field(default=30, validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    refresh_token_expire_days: int = Field(default=7, validation_alias="REFRESH_TOKEN_EXPIRE_DAYS")
+
+    # Crypto para API Keys
+    crypto_key: str = Field(
+        default="dGVzdC1jcnlwdG8ta2V5LWZvci1kZXZlbG9wbWVudC1vbmx5LTEyMzQ1Ng==",
+        validation_alias="CRYPTO_KEY",
+    )
+
     @property
     def evolution_request_origins_list(self) -> list[str]:
-        """Orígenes a probar contra CORS en Evolution (split por coma, trim incluido)."""
         raw = self.evolution_request_origin or ""
         return [p.strip().rstrip("/") for p in raw.split(",") if p.strip()]
 

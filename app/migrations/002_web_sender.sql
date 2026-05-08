@@ -1,0 +1,159 @@
+-- =============================================================
+-- Migration 002: Web Sender - Login, Grupos Evolution, Jobs
+-- =============================================================
+
+-- Tabla de usuarios
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255) NOT NULL DEFAULT '',
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Refresh tokens para JWT
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Conexiones Evolution guardadas por usuario
+CREATE TABLE IF NOT EXISTS evolution_connections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    base_url VARCHAR(512) NOT NULL,
+    api_key_encrypted VARCHAR(512) NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    last_verified_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, name)
+);
+
+-- Cache de instancias Evolution
+CREATE TABLE IF NOT EXISTS instances_cache (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    connection_id UUID NOT NULL REFERENCES evolution_connections(id) ON DELETE CASCADE,
+    instance_id VARCHAR(255) NOT NULL,
+    instance_name VARCHAR(255) NOT NULL,
+    connection_status VARCHAR(50) DEFAULT 'open',
+    owner_jid VARCHAR(255),
+    profile_name VARCHAR(255),
+    profile_pic_url TEXT,
+    integration VARCHAR(50) DEFAULT 'WHATSAPP_BUSINESS',
+    token VARCHAR(512),
+    client_name VARCHAR(255),
+    synced_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(connection_id, instance_id)
+);
+
+-- Cache de grupos de WhatsApp
+CREATE TABLE IF NOT EXISTS groups_cache (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_cache_id UUID NOT NULL REFERENCES instances_cache(id) ON DELETE CASCADE,
+    remote_jid VARCHAR(255) NOT NULL,
+    push_name VARCHAR(512),
+    subject VARCHAR(512),
+    profile_pic_url TEXT,
+    participants_count INT DEFAULT 0,
+    labels TEXT[] DEFAULT '{}',
+    synced_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(instance_cache_id, remote_jid)
+);
+
+-- Jobs de envío masivo
+CREATE TABLE IF NOT EXISTS jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    name VARCHAR(255) DEFAULT '',
+    status VARCHAR(50) DEFAULT 'pending',
+    total_groups INT DEFAULT 0,
+    processed_groups INT DEFAULT 0,
+    success_count INT DEFAULT 0,
+    fail_count INT DEFAULT 0,
+    error_message TEXT,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Grupos seleccionados para un job
+CREATE TABLE IF NOT EXISTS job_groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    remote_jid VARCHAR(255) NOT NULL,
+    push_name VARCHAR(512) DEFAULT '',
+    instance_name VARCHAR(255) DEFAULT '',
+    instance_token VARCHAR(512) DEFAULT '',
+    evolution_base_url VARCHAR(512) DEFAULT '',
+    status VARCHAR(50) DEFAULT 'pending',
+    detail TEXT,
+    sent_at TIMESTAMPTZ,
+    UNIQUE(job_id, remote_jid)
+);
+
+-- Mensajes configurados para un job
+CREATE TABLE IF NOT EXISTS job_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    msg_type VARCHAR(50) DEFAULT 'text',
+    content TEXT DEFAULT '',
+    media_base64 TEXT DEFAULT '',
+    media_mimetype VARCHAR(100) DEFAULT '',
+    file_name VARCHAR(255) DEFAULT '',
+    sort_order INT DEFAULT 0
+);
+
+-- Historial persistente de mensajes enviados
+CREATE TABLE IF NOT EXISTS message_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID REFERENCES jobs(id) ON DELETE SET NULL,
+    job_group_id UUID REFERENCES job_groups(id) ON DELETE SET NULL,
+    user_id UUID REFERENCES users(id),
+    remote_jid VARCHAR(255) NOT NULL,
+    push_name VARCHAR(512) DEFAULT '',
+    instance_name VARCHAR(255) DEFAULT '',
+    msg_type VARCHAR(50) DEFAULT 'text',
+    content TEXT DEFAULT '',
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    error_detail TEXT,
+    evolution_message_id VARCHAR(255),
+    sent_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Tabla para relacionar schedules con grupos (nueva)
+CREATE TABLE IF NOT EXISTS schedule_groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    schedule_id UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+    remote_jid VARCHAR(255) NOT NULL,
+    push_name VARCHAR(512) DEFAULT '',
+    instance_name VARCHAR(255) DEFAULT '',
+    instance_token VARCHAR(512) DEFAULT '',
+    evolution_base_url VARCHAR(512) DEFAULT ''
+);
+
+-- Modificar schedules para soportar user_id y job_id
+ALTER TABLE schedules ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+ALTER TABLE schedules ADD COLUMN IF NOT EXISTS job_id UUID REFERENCES jobs(id);
+ALTER TABLE schedules ADD COLUMN IF NOT EXISTS message_template TEXT DEFAULT '';
+
+-- Modificar schedule_history
+ALTER TABLE schedule_history ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+
+-- Índices
+CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_job_groups_job_id ON job_groups(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_groups_status ON job_groups(status);
+CREATE INDEX IF NOT EXISTS idx_message_history_job_id ON message_history(job_id);
+CREATE INDEX IF NOT EXISTS idx_message_history_user_id ON message_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_groups_cache_instance ON groups_cache(instance_cache_id);
+CREATE INDEX IF NOT EXISTS idx_evolution_connections_user ON evolution_connections(user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);
