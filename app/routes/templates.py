@@ -1,6 +1,6 @@
 """Routes para plantillas de mensajes."""
 
-import os
+import json
 import uuid
 from pathlib import Path
 
@@ -20,6 +20,10 @@ router = APIRouter(prefix="/api/v1/message-templates", tags=["message-templates"
 UPLOAD_DIR = settings.data_dir / "template-media"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+_ALLOWED = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
+_MAX_SIZE = 5 * 1024 * 1024  # 5MB
+
 
 @router.get("")
 def get_templates(user: dict = Depends(get_current_user)):
@@ -30,36 +34,33 @@ def get_templates(user: dict = Depends(get_current_user)):
 def add_template(body: dict, user: dict = Depends(get_current_user)):
     name = body.get("name", "").strip()
     content = body.get("content", "").strip()
-    msg_type = body.get("msg_type", "text")
-    media_url = body.get("media_url", "")
-    media_type = body.get("media_type", "")
+    media_urls = body.get("media_urls", [])
+    link_url = body.get("link_url", "").strip()
 
     if not name:
         raise HTTPException(status_code=400, detail="El nombre es requerido")
     if not content:
         raise HTTPException(status_code=400, detail="El contenido es requerido")
 
-    return create_template(str(user["id"]), name, content, msg_type, media_url, media_type)
+    return create_template(str(user["id"]), name, content, media_urls, link_url)
 
 
 @router.put("/{template_id}")
 def edit_template(template_id: str, body: dict, user: dict = Depends(get_current_user)):
     name = body.get("name")
     content = body.get("content")
-    msg_type = body.get("msg_type")
-    media_url = body.get("media_url")
-    media_type = body.get("media_type")
+    media_urls = body.get("media_urls")
+    link_url = body.get("link_url")
 
-    if not any([name, content, msg_type, media_url is not None, media_type is not None]):
+    if not any([name, content, media_urls is not None, link_url is not None]):
         raise HTTPException(status_code=400, detail="Debes enviar al menos un campo")
 
     result = update_template(
         template_id, str(user["id"]),
         name=name.strip() if name else None,
         content=content.strip() if content else None,
-        msg_type=msg_type or None,
-        media_url=media_url if media_url is not None else None,
-        media_type=media_type if media_type is not None else None,
+        media_urls=media_urls if media_urls is not None else None,
+        link_url=link_url.strip() if link_url else None,
     )
     if not result:
         raise HTTPException(status_code=404, detail="Plantilla no encontrada")
@@ -73,22 +74,37 @@ def remove_template(template_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.post("/upload")
-async def upload_media(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    """Sube un archivo multimedia para usar en plantillas."""
-    allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-    if file.content_type not in allowed:
-        raise HTTPException(status_code=400, detail="Tipo de archivo no permitido. Usa: jpg, png, webp, gif")
+async def upload_media(
+    files: list[UploadFile] = File(...),
+    user: dict = Depends(get_current_user),
+):
+    """Sube uno o varios archivos multimedia. Máx 5MB c/u."""
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail="Máximo 10 archivos por vez")
 
-    ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
-    filename = f"{uuid.uuid4().hex}{ext.get(file.content_type, '.bin')}"
-    filepath = UPLOAD_DIR / filename
+    results = []
+    for file in files:
+        if file.content_type not in _ALLOWED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tipo no permitido: {file.filename}. Usa: jpg, png, webp, gif",
+            )
 
-    content = await file.read()
-    if len(content) > 5 * 1024 * 1024:  # 5MB
-        raise HTTPException(status_code=400, detail="La imagen no puede superar los 5MB")
+        ext = _EXT.get(file.content_type, ".bin")
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = UPLOAD_DIR / filename
 
-    with open(filepath, "wb") as f:
-        f.write(content)
+        content = await file.read()
+        if len(content) > _MAX_SIZE:
+            raise HTTPException(status_code=400, detail=f"{file.filename} supera los 5MB")
 
-    media_url = f"/media/templates/{filename}"
-    return {"url": media_url, "media_type": file.content_type, "filename": filename}
+        with open(filepath, "wb") as f:
+            f.write(content)
+
+        results.append({
+            "url": f"/media/templates/{filename}",
+            "media_type": file.content_type,
+            "filename": filename,
+        })
+
+    return {"files": results}

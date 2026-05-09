@@ -2,48 +2,61 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from app.db import execute, query
 
 
+def _parse_media(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+        return [raw] if raw else []
+    except (json.JSONDecodeError, TypeError):
+        return [raw] if raw else []
+
+
 def list_templates(user_id: str) -> list[dict]:
     """Lista las plantillas del usuario ordenadas por más reciente."""
     rows = query(
-        "SELECT id, name, msg_type, content, media_url, media_type, created_at, updated_at "
+        "SELECT id, name, msg_type, content, media_url, link_url, created_at, updated_at "
         "FROM message_templates WHERE user_id = %s ORDER BY updated_at DESC",
         (user_id,),
     )
-    return [
-        {
+    result = []
+    for r in rows:
+        result.append({
             "id": str(r["id"]),
             "name": r["name"],
             "msg_type": r["msg_type"] or "text",
             "content": r["content"],
-            "media_url": r.get("media_url") or "",
-            "media_type": r.get("media_type") or "",
+            "media_urls": _parse_media(r.get("media_url")),
+            "link_url": r.get("link_url") or "",
             "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
             "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
-        }
-        for r in rows
-    ]
+        })
+    return result
 
 
 def create_template(
     user_id: str,
     name: str,
     content: str,
-    msg_type: str = "text",
-    media_url: str = "",
-    media_type: str = "",
+    media_urls: list[str] | None = None,
+    link_url: str = "",
 ) -> dict:
+    media_json = json.dumps(media_urls or [])
     execute(
-        "INSERT INTO message_templates (user_id, name, msg_type, content, media_url, media_type) "
+        "INSERT INTO message_templates (user_id, name, msg_type, content, media_url, link_url) "
         "VALUES (%s, %s, %s, %s, %s, %s)",
-        (user_id, name, msg_type, content, media_url, media_type),
+        (user_id, name, "text", content, media_json, link_url),
     )
     rows = query(
-        "SELECT id, name, msg_type, content, media_url, media_type, created_at, updated_at "
+        "SELECT id, name, msg_type, content, media_url, link_url, created_at, updated_at "
         "FROM message_templates WHERE user_id = %s AND name = %s",
         (user_id, name),
     )
@@ -51,10 +64,10 @@ def create_template(
     return {
         "id": str(r["id"]),
         "name": r["name"],
-        "msg_type": r["msg_type"] or "text",
+        "msg_type": "text",
         "content": r["content"],
-        "media_url": r.get("media_url") or "",
-        "media_type": r.get("media_type") or "",
+        "media_urls": _parse_media(r.get("media_url")),
+        "link_url": r.get("link_url") or "",
         "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
         "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
     }
@@ -65,9 +78,8 @@ def update_template(
     user_id: str,
     name: str | None = None,
     content: str | None = None,
-    msg_type: str | None = None,
-    media_url: str | None = None,
-    media_type: str | None = None,
+    media_urls: list[str] | None = None,
+    link_url: str | None = None,
 ) -> dict | None:
     """Actualiza una plantilla. Retorna la actualizada o None si no existe."""
     existing = query(
@@ -85,15 +97,12 @@ def update_template(
     if content is not None:
         updates.append("content = %s")
         params.append(content)
-    if msg_type is not None:
-        updates.append("msg_type = %s")
-        params.append(msg_type)
-    if media_url is not None:
+    if media_urls is not None:
         updates.append("media_url = %s")
-        params.append(media_url)
-    if media_type is not None:
-        updates.append("media_type = %s")
-        params.append(media_type)
+        params.append(json.dumps(media_urls))
+    if link_url is not None:
+        updates.append("link_url = %s")
+        params.append(link_url)
 
     if updates:
         updates.append("updated_at = %s")
@@ -105,7 +114,7 @@ def update_template(
         )
 
     rows = query(
-        "SELECT id, name, msg_type, content, media_url, media_type, created_at, updated_at "
+        "SELECT id, name, msg_type, content, media_url, link_url, created_at, updated_at "
         "FROM message_templates WHERE id = %s",
         (template_id,),
     )
@@ -115,10 +124,10 @@ def update_template(
     return {
         "id": str(r["id"]),
         "name": r["name"],
-        "msg_type": r["msg_type"] or "text",
+        "msg_type": "text",
         "content": r["content"],
-        "media_url": r.get("media_url") or "",
-        "media_type": r.get("media_type") or "",
+        "media_urls": _parse_media(r.get("media_url")),
+        "link_url": r.get("link_url") or "",
         "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
         "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
     }
