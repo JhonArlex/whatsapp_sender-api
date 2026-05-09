@@ -7,6 +7,7 @@ from app.services.evolution_service import (
     create_connection,
     delete_connection,
     get_connections_for_user,
+    update_connection,
     verify_connection,
 )
 
@@ -31,6 +32,27 @@ def add_connection(body: dict, user: dict = Depends(get_current_user)):
     return conn
 
 
+@router.put("/{connection_id}")
+def edit_connection(connection_id: str, body: dict, user: dict = Depends(get_current_user)):
+    """Edita una conexión existente. Solo se actualizan los campos enviados."""
+    name = body.get("name", "").strip()
+    base_url = body.get("base_url", "").strip().rstrip("/")
+    api_key = body.get("api_key")
+
+    if not name and not base_url and not api_key:
+        raise HTTPException(status_code=400, detail="Debes enviar al menos un campo para actualizar")
+
+    result = update_connection(
+        connection_id, str(user["id"]),
+        name=name or None,
+        base_url=base_url or None,
+        api_key=api_key or None,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Conexión no encontrada")
+    return result
+
+
 @router.delete("/{connection_id}")
 def remove_connection(connection_id: str, user: dict = Depends(get_current_user)):
     delete_connection(connection_id, str(user["id"]))
@@ -39,4 +61,8 @@ def remove_connection(connection_id: str, user: dict = Depends(get_current_user)
 
 @router.post("/{connection_id}/verify")
 def verify_conn(connection_id: str, user: dict = Depends(get_current_user)):
-    return verify_connection(connection_id, str(user["id"]))
+    """Verifica la conexión y devuelve error detallado si falla."""
+    result = verify_connection(connection_id, str(user["id"]))
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Error desconocido"))
+    return result
