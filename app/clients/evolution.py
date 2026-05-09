@@ -39,18 +39,16 @@ class EvolutionClient:
     async def verify_server(self) -> dict | None:
         """GET / - verifica que el servidor responda.
 
-        Nota: Evolution API suele devolver HTTP 500 con "Not allowed by CORS"
-        incluso sin CORS de por medio. Aún así, si obtenemos JSON parseable
+        Evolution API suele devolver HTTP 500 con "Not allowed by CORS"
+        incluso sin CORS de por medio. Si obtenemos JSON o un status < 500,
         lo consideramos como "servidor responde".
         """
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 r = await client.get(f"{self.base_url}/", headers=self._headers())
                 try:
-                    data = r.json()
-                    return data
+                    return r.json()
                 except Exception:
-                    # Si responde aunque sea con 500, es un servidor Evolution
                     if r.status_code < 500:
                         return {"status": r.status_code}
                     return None
@@ -72,8 +70,6 @@ class EvolutionClient:
                 )
                 try:
                     data = r.json()
-                    # Evolution devuelve 500 incluso con creds válidas si
-                    # CORS no está bien configurado. Intentamos detectarlo.
                     if r.status_code >= 400:
                         msg = str(data)
                         if "CORS" in msg or "Not allowed" in msg:
@@ -92,11 +88,14 @@ class EvolutionClient:
             return None
 
     async def fetch_instances(self, api_key: str) -> list[dict]:
-        """GET /instance/fetchAll - lista todas las instancias."""
+        """GET /instance/fetchInstances - obtiene todas las instancias.
+
+        Nota: Evolution API v2+ usa /instance/fetchInstances (no fetchAll).
+        """
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 r = await client.get(
-                    f"{self.base_url}/instance/fetchAll",
+                    f"{self.base_url}/instance/fetchInstances",
                     headers=self._headers(api_key),
                 )
                 if r.status_code == 200:
