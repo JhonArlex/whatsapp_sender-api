@@ -9,3 +9,4 @@ cryptography==44.0.1
 httpx==0.28.1
 websockets==14.1
 python-multipart==0.0.20
+boto3==1.35.0

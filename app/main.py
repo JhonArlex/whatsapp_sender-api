@@ -236,7 +236,6 @@ def historial_schedules(
 # NUEVAS RUTAS DEL WEB SENDER v2
 # ═══════════════════════════════════════════════════════════════════════
 
-app.mount("/media/templates", StaticFiles(directory=str(settings.data_dir / "template-media")), name="template-media")
 app.include_router(auth.router)
 app.include_router(connections.router)
 app.include_router(instances.router)

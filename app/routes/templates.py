@@ -1,13 +1,10 @@
 """Routes para plantillas de mensajes."""
 
-import json
-import uuid
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import Response
 
-from app.config import settings
 from app.core.auth import get_current_user
+from app.services.minio_service import get_file, upload_file
 from app.services.template_service import (
     create_template,
     delete_template,
@@ -17,11 +14,7 @@ from app.services.template_service import (
 
 router = APIRouter(prefix="/api/v1/message-templates", tags=["message-templates"])
 
-UPLOAD_DIR = settings.data_dir / "template-media"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
 _ALLOWED = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 _MAX_SIZE = 5 * 1024 * 1024  # 5MB
 
 
@@ -78,7 +71,7 @@ async def upload_media(
     files: list[UploadFile] = File(...),
     user: dict = Depends(get_current_user),
 ):
-    """Sube uno o varios archivos multimedia. Máx 5MB c/u."""
+    """Sube uno o varios archivos a MinIO. Máx 5MB c/u, hasta 10 archivos."""
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="Máximo 10 archivos por vez")
 
@@ -90,21 +83,25 @@ async def upload_media(
                 detail=f"Tipo no permitido: {file.filename}. Usa: jpg, png, webp, gif",
             )
 
-        ext = _EXT.get(file.content_type, ".bin")
-        filename = f"{uuid.uuid4().hex}{ext}"
-        filepath = UPLOAD_DIR / filename
-
         content = await file.read()
         if len(content) > _MAX_SIZE:
             raise HTTPException(status_code=400, detail=f"{file.filename} supera los 5MB")
 
-        with open(filepath, "wb") as f:
-            f.write(content)
-
+        filename = upload_file(content, file.content_type)
         results.append({
-            "url": f"/media/templates/{filename}",
+            "url": filename,
             "media_type": file.content_type,
             "filename": filename,
         })
 
     return {"files": results}
+
+
+@router.get("/media/{filename}")
+def serve_media(filename: str, user: dict = Depends(get_current_user)):
+    """Sirve un archivo de MinIO a través de la API."""
+    result = get_file(filename)
+    if not result:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    bytes_data, content_type = result
+    return Response(content=bytes_data, media_type=content_type)

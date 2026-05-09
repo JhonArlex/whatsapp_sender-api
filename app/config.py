@@ -50,6 +50,13 @@ class Settings(BaseSettings):
         validation_alias="CRYPTO_KEY",
     )
 
+    # MinIO / S3
+    minio_endpoint: str = Field(default="localhost:9000", validation_alias="MINIO_ENDPOINT")
+    minio_access_key: str = Field(default="admin", validation_alias="MINIO_ACCESS_KEY")
+    minio_secret_key: str = Field(default="admin123", validation_alias="MINIO_SECRET_KEY")
+    minio_bucket: str = Field(default="templates", validation_alias="MINIO_BUCKET")
+    minio_public_url: str = Field(default="", validation_alias="MINIO_PUBLIC_URL")
+
     @property
     def evolution_request_origins_list(self) -> list[str]:
         raw = self.evolution_request_origin or ""
