@@ -114,7 +114,6 @@ def test_template(template_id: str, body: dict, user: dict = Depends(get_current
     from app.db import query as db_query
     from app.services.template_service import list_templates as _list
     from app.clients.evolution import EvolutionClient as _EC
-    from app.core.crypto import decrypt_api_key as _decrypt
     from app.config import settings as _settings
 
     import asyncio
@@ -132,7 +131,7 @@ def test_template(template_id: str, body: dict, user: dict = Depends(get_current
 
     # Buscar conexión activa que tenga la instancia
     rows = db_query(
-        """SELECT ec.base_url, ec.api_key_encrypted
+        """SELECT ec.base_url, ic.token
            FROM evolution_connections ec
            JOIN instances_cache ic ON ic.connection_id = ec.id
            WHERE ec.user_id = %s AND ic.instance_name = %s AND ec.is_active = true
@@ -143,15 +142,15 @@ def test_template(template_id: str, body: dict, user: dict = Depends(get_current
         raise HTTPException(status_code=404, detail=f"Instancia '{instance_name}' no encontrada")
 
     base_url = rows[0]["base_url"]
-    api_key = _decrypt(rows[0]["api_key_encrypted"])
+    instance_token = rows[0]["token"]
 
-    client = _EC(base_url, api_key, origin=_settings.evolution_request_origin)
+    client = _EC(base_url, origin=_settings.evolution_request_origin)
 
     async def _send():
         msg = tpl.get("content", "")
         media_urls = tpl.get("media_urls", [])
-        # Formatear número: asegurar que termina en @s.whatsapp.net
-        number = remote_jid if "@" in remote_jid else f"{remote_jid}@s.whatsapp.net"
+        # Limpiar número: quitar sufijos de WhatsApp
+        number = remote_jid.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
         if media_urls and len(media_urls) > 0:
             # Enviar primera imagen con caption, el resto sin caption
@@ -167,13 +166,15 @@ def test_template(template_id: str, body: dict, user: dict = Depends(get_current
                 b64 = base64.b64encode(fdata[0]).decode()
                 mimetype = fdata[1]
                 await client.send_media(
-                    instance_name, api_key,
+                    instance_name, instance_token,
                     number, caption, b64, mimetype, fname,
                 )
-            return {"ok": True, "message": f"Enviado a {remote_jid}"}
+            return {"ok": True, "message": f"Enviado a {remote_jid}", "evolution_status": "sent"}
 
         # Solo texto
-        await client.send_text(instance_name, api_key, number, msg)
-        return {"ok": True, "message": f"Enviado a {remote_jid}"}
+        resp = await client.send_text(instance_name, instance_token, number, msg)
+        if not resp or resp.get("status") == "PENDING" or resp.get("key"):
+            return {"ok": True, "message": f"Enviado a {remote_jid}", "evolution_status": resp.get("status", "ok")}
+        return {"ok": False, "message": f"Error al enviar: {resp}"}
 
     return asyncio.run(_send())

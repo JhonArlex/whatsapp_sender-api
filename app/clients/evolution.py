@@ -23,7 +23,7 @@ class EvolutionClient:
     ):
         self.base_url = base_url.rstrip("/")
         self.global_api_key = global_api_key
-        self.origin = origin
+        self.origin = (origin or "").split(",")[0].strip() if origin else None
         self._timeout = httpx.Timeout(120.0)
 
     def _headers(self, api_key: str | None = None) -> dict[str, str]:

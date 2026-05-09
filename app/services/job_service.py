@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.clients.evolution import EvolutionClient
+from app.config import settings
 from app.db import execute, query
 
 # Almacén en memoria para jobs activos y sus eventos de cancelación
@@ -143,7 +144,7 @@ def _run_job_worker(job_id: str, user_id: str, cancel_event: threading.Event):
                 if cancel_event.is_set():
                     return
 
-                client = EvolutionClient(evo_base_url)
+                client = EvolutionClient(evo_base_url, origin=settings.evolution_request_origin)
                 loop = asyncio.new_event_loop()
                 try:
                     if msg["msg_type"] == "text":
