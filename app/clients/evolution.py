@@ -139,15 +139,18 @@ class EvolutionClient:
             return None
 
     async def find_chats(self, instance_name: str, instance_token: str) -> list[dict]:
-        """GET /chat/findChats/{instance} - obtiene todos los chats."""
+        """POST /chat/findChats/{instance} - obtiene los chats de una instancia.
+
+        Evolution API v2+ usa POST con filtro en el body.
+        """
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 url = f"{self.base_url}/chat/findChats/{instance_name}"
-                params = {"where": '{"isGroup":true}'}
-                r = await client.get(
+                payload = {"where": {"isGroup": True}}
+                r = await client.post(
                     url,
                     headers=self._headers(instance_token),
-                    params=params,
+                    json=payload,
                 )
                 if r.status_code == 200:
                     data = r.json()
@@ -162,12 +165,13 @@ class EvolutionClient:
             return []
 
     async def find_all_chats(self, instance_name: str, instance_token: str) -> list[dict]:
-        """GET /chat/findChats/{instance} sin filtro - todos los chats."""
+        """POST /chat/findChats/{instance} sin filtro - todos los chats."""
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                r = await client.get(
+                r = await client.post(
                     f"{self.base_url}/chat/findChats/{instance_name}",
                     headers=self._headers(instance_token),
+                    json={},
                 )
                 if r.status_code == 200:
                     data = r.json()

@@ -342,6 +342,9 @@ def sync_groups(user_id: str) -> list[dict]:
 
             for chat in chats:
                 remote_jid = chat.get("remoteJid", chat.get("id", ""))
+                # Solo grupos (@g.us), ignorar chats individuales
+                if not remote_jid.endswith("@g.us"):
+                    continue
                 push_name = chat.get("pushName", chat.get("name", ""))
                 subject = chat.get("subject", push_name)
 
