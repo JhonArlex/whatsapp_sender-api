@@ -106,3 +106,74 @@ def serve_media(filename: str):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     bytes_data, content_type = result
     return Response(content=bytes_data, media_type=content_type)
+
+
+@router.post("/{template_id}/test")
+def test_template(template_id: str, body: dict, user: dict = Depends(get_current_user)):
+    """Envía la plantilla a un número específico para probarla."""
+    from app.db import query as db_query
+    from app.services.template_service import list_templates as _list
+    from app.clients.evolution import EvolutionClient as _EC
+    from app.core.crypto import decrypt_api_key as _decrypt
+    from app.config import settings as _settings
+
+    import asyncio
+
+    # Obtener plantilla
+    templates = _list(str(user["id"]))
+    tpl = next((t for t in templates if t["id"] == template_id), None)
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+
+    instance_name = body.get("instance_name", "").strip()
+    remote_jid = body.get("remote_jid", "").strip()
+    if not instance_name or not remote_jid:
+        raise HTTPException(status_code=400, detail="instance_name y remote_jid son requeridos")
+
+    # Buscar conexión activa que tenga la instancia
+    rows = db_query(
+        """SELECT ec.base_url, ec.api_key_encrypted
+           FROM evolution_connections ec
+           JOIN instances_cache ic ON ic.connection_id = ec.id
+           WHERE ec.user_id = %s AND ic.instance_name = %s AND ec.is_active = true
+           LIMIT 1""",
+        (str(user["id"]), instance_name),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Instancia '{instance_name}' no encontrada")
+
+    base_url = rows[0]["base_url"]
+    api_key = _decrypt(rows[0]["api_key_encrypted"])
+
+    client = _EC(base_url, api_key, origin=_settings.evolution_request_origin)
+
+    async def _send():
+        msg = tpl.get("content", "")
+        media_urls = tpl.get("media_urls", [])
+        # Formatear número: asegurar que termina en @s.whatsapp.net
+        number = remote_jid if "@" in remote_jid else f"{remote_jid}@s.whatsapp.net"
+
+        if media_urls and len(media_urls) > 0:
+            # Enviar primera imagen con caption, el resto sin caption
+            for i, murl in enumerate(media_urls):
+                caption = msg if i == 0 else ""
+                # Descargar imagen de MinIO
+                from app.services.minio_service import get_file as _get_file
+                fname = murl.split("/")[-1]
+                fdata = _get_file(fname)
+                if fdata is None:
+                    continue
+                import base64
+                b64 = base64.b64encode(fdata[0]).decode()
+                mimetype = fdata[1]
+                await client.send_media(
+                    instance_name, api_key,
+                    number, caption, b64, mimetype, fname,
+                )
+            return {"ok": True, "message": f"Enviado a {remote_jid}"}
+
+        # Solo texto
+        await client.send_text(instance_name, api_key, number, msg)
+        return {"ok": True, "message": f"Enviado a {remote_jid}"}
+
+    return asyncio.run(_send())
