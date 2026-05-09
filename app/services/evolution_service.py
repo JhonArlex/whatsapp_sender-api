@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.clients.evolution import EvolutionClient
+from app.config import settings
 from app.core.crypto import decrypt_api_key, encrypt_api_key
 from app.db import execute, query
 
@@ -130,7 +131,7 @@ def verify_connection(connection_id: str, user_id: str) -> dict:
     r = rows[0]
     api_key = decrypt_api_key(r["api_key_encrypted"])
     base_url = r["base_url"]
-    client = EvolutionClient(base_url, api_key)
+    client = EvolutionClient(base_url, api_key, origin=settings.evolution_request_origin)
 
     import asyncio
 
@@ -240,7 +241,7 @@ def sync_instances(user_id: str) -> list[dict]:
         for conn in connections:
             conn_id = str(conn["id"])
             api_key = decrypt_api_key(conn["api_key_encrypted"])
-            client = EvolutionClient(conn["base_url"], api_key)
+            client = EvolutionClient(conn["base_url"], api_key, origin=settings.evolution_request_origin)
             instances = await client.fetch_instances(api_key)
             for inst in instances:
                 inst_id = inst.get("id", inst.get("instanceId", ""))
@@ -336,7 +337,7 @@ def sync_groups(user_id: str) -> list[dict]:
             base_url = inst["base_url"]
             inst_cache_id = str(inst["id"])
 
-            client = EvolutionClient(base_url)
+            client = EvolutionClient(base_url, origin=settings.evolution_request_origin)
             chats = await client.find_chats(instance_name, token)
 
             for chat in chats:

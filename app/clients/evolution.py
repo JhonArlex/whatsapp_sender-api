@@ -8,11 +8,22 @@ import httpx
 
 
 class EvolutionClient:
-    """Cliente para interactuar con Evolution API."""
+    """Cliente para interactuar con Evolution API.
 
-    def __init__(self, base_url: str, global_api_key: str | None = None):
+    Evolution API tiene CORS habilitado y requiere un header ``Origin``
+    válido (definido via ``EVOLUTION_REQUEST_ORIGIN``). Si no se envía
+    o es uno no permitido, devuelve HTTP 500 con "Not allowed by CORS".
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        global_api_key: str | None = None,
+        origin: str | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.global_api_key = global_api_key
+        self.origin = origin
         self._timeout = httpx.Timeout(120.0)
 
     def _headers(self, api_key: str | None = None) -> dict[str, str]:
@@ -20,16 +31,33 @@ class EvolutionClient:
         key = api_key or self.global_api_key
         if key:
             headers["apikey"] = key
+        # Evolution API requiere Origin válido (CORS_ORIGIN en el servidor)
+        if self.origin:
+            headers["Origin"] = self.origin.rstrip("/")
         return headers
 
     async def verify_server(self) -> dict | None:
-        """GET / - verifica que el servidor responda."""
+        """GET / - verifica que el servidor responda.
+
+        Nota: Evolution API suele devolver HTTP 500 con "Not allowed by CORS"
+        incluso sin CORS de por medio. Aún así, si obtenemos JSON parseable
+        lo consideramos como "servidor responde".
+        """
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 r = await client.get(f"{self.base_url}/", headers=self._headers())
-                if r.status_code == 200:
-                    return r.json()
-                return None
+                try:
+                    data = r.json()
+                    return data
+                except Exception:
+                    # Si responde aunque sea con 500, es un servidor Evolution
+                    if r.status_code < 500:
+                        return {"status": r.status_code}
+                    return None
+        except httpx.ConnectError:
+            return None
+        except httpx.TimeoutException:
+            return None
         except Exception:
             return None
 
@@ -42,9 +70,24 @@ class EvolutionClient:
                     headers=self._headers(api_key),
                     json={},
                 )
-                if r.status_code in (200, 201):
-                    return r.json()
-                return None
+                try:
+                    data = r.json()
+                    # Evolution devuelve 500 incluso con creds válidas si
+                    # CORS no está bien configurado. Intentamos detectarlo.
+                    if r.status_code >= 400:
+                        msg = str(data)
+                        if "CORS" in msg or "Not allowed" in msg:
+                            return {
+                                "ok": False,
+                                "cors_error": True,
+                                "message": "CORS bloqueando — se necesita Origin válido",
+                            }
+                        return None
+                    return data
+                except Exception:
+                    if r.status_code < 500:
+                        return {"status": r.status_code}
+                    return None
         except Exception:
             return None
 
