@@ -25,7 +25,7 @@ from app.schedule_models import (
 )
 from app.scheduler import start_scheduler, store
 
-from app.routes import auth, connections, instances, groups, jobs as jobs_routes, messages, stats
+from app.routes import auth, connections, instances, groups, jobs as jobs_routes, messages, stats, templates
 
 logging.basicConfig(
     level=logging.INFO,
@@ -242,6 +242,7 @@ app.include_router(groups.router)
 app.include_router(jobs_routes.router)
 app.include_router(messages.router)
 app.include_router(stats.router)
+app.include_router(templates.router)
 
 
 # ═══════════════════════════════════════════════════════════════════════
