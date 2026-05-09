@@ -10,7 +10,7 @@ from app.db import execute, query
 def list_templates(user_id: str) -> list[dict]:
     """Lista las plantillas del usuario ordenadas por más reciente."""
     rows = query(
-        "SELECT id, name, msg_type, content, created_at, updated_at "
+        "SELECT id, name, msg_type, content, media_url, media_type, created_at, updated_at "
         "FROM message_templates WHERE user_id = %s ORDER BY updated_at DESC",
         (user_id,),
     )
@@ -18,8 +18,10 @@ def list_templates(user_id: str) -> list[dict]:
         {
             "id": str(r["id"]),
             "name": r["name"],
-            "msg_type": r["msg_type"],
+            "msg_type": r["msg_type"] or "text",
             "content": r["content"],
+            "media_url": r.get("media_url") or "",
+            "media_type": r.get("media_type") or "",
             "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
             "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
         }
@@ -27,13 +29,21 @@ def list_templates(user_id: str) -> list[dict]:
     ]
 
 
-def create_template(user_id: str, name: str, content: str, msg_type: str = "text") -> dict:
+def create_template(
+    user_id: str,
+    name: str,
+    content: str,
+    msg_type: str = "text",
+    media_url: str = "",
+    media_type: str = "",
+) -> dict:
     execute(
-        "INSERT INTO message_templates (user_id, name, msg_type, content) VALUES (%s, %s, %s, %s)",
-        (user_id, name, msg_type, content),
+        "INSERT INTO message_templates (user_id, name, msg_type, content, media_url, media_type) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (user_id, name, msg_type, content, media_url, media_type),
     )
     rows = query(
-        "SELECT id, name, msg_type, content, created_at, updated_at "
+        "SELECT id, name, msg_type, content, media_url, media_type, created_at, updated_at "
         "FROM message_templates WHERE user_id = %s AND name = %s",
         (user_id, name),
     )
@@ -41,14 +51,24 @@ def create_template(user_id: str, name: str, content: str, msg_type: str = "text
     return {
         "id": str(r["id"]),
         "name": r["name"],
-        "msg_type": r["msg_type"],
+        "msg_type": r["msg_type"] or "text",
         "content": r["content"],
+        "media_url": r.get("media_url") or "",
+        "media_type": r.get("media_type") or "",
         "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
         "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
     }
 
 
-def update_template(template_id: str, user_id: str, name: str | None = None, content: str | None = None) -> dict | None:
+def update_template(
+    template_id: str,
+    user_id: str,
+    name: str | None = None,
+    content: str | None = None,
+    msg_type: str | None = None,
+    media_url: str | None = None,
+    media_type: str | None = None,
+) -> dict | None:
     """Actualiza una plantilla. Retorna la actualizada o None si no existe."""
     existing = query(
         "SELECT id FROM message_templates WHERE id = %s AND user_id = %s",
@@ -65,6 +85,15 @@ def update_template(template_id: str, user_id: str, name: str | None = None, con
     if content is not None:
         updates.append("content = %s")
         params.append(content)
+    if msg_type is not None:
+        updates.append("msg_type = %s")
+        params.append(msg_type)
+    if media_url is not None:
+        updates.append("media_url = %s")
+        params.append(media_url)
+    if media_type is not None:
+        updates.append("media_type = %s")
+        params.append(media_type)
 
     if updates:
         updates.append("updated_at = %s")
@@ -76,7 +105,7 @@ def update_template(template_id: str, user_id: str, name: str | None = None, con
         )
 
     rows = query(
-        "SELECT id, name, msg_type, content, created_at, updated_at "
+        "SELECT id, name, msg_type, content, media_url, media_type, created_at, updated_at "
         "FROM message_templates WHERE id = %s",
         (template_id,),
     )
@@ -86,8 +115,10 @@ def update_template(template_id: str, user_id: str, name: str | None = None, con
     return {
         "id": str(r["id"]),
         "name": r["name"],
-        "msg_type": r["msg_type"],
+        "msg_type": r["msg_type"] or "text",
         "content": r["content"],
+        "media_url": r.get("media_url") or "",
+        "media_type": r.get("media_type") or "",
         "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
         "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
     }

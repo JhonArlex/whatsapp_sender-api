@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -235,6 +236,7 @@ def historial_schedules(
 # NUEVAS RUTAS DEL WEB SENDER v2
 # ═══════════════════════════════════════════════════════════════════════
 
+app.mount("/media/templates", StaticFiles(directory=str(settings.data_dir / "template-media")), name="template-media")
 app.include_router(auth.router)
 app.include_router(connections.router)
 app.include_router(instances.router)
