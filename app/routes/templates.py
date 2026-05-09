@@ -99,7 +99,7 @@ async def upload_media(
 
 
 @router.get("/media/{filename}")
-def serve_media(filename: str, user: dict = Depends(get_current_user)):
+def serve_media(filename: str):
     """Sirve un archivo de MinIO a través de la API."""
     result = get_file(filename)
     if not result:
