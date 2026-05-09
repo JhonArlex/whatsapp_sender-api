@@ -88,8 +88,9 @@ async def upload_media(
             raise HTTPException(status_code=400, detail=f"{file.filename} supera los 5MB")
 
         filename = upload_file(content, file.content_type)
+        file_url = f"/api/v1/message-templates/media/{filename}"
         results.append({
-            "url": filename,
+            "url": file_url,
             "media_type": file.content_type,
             "filename": filename,
         })
