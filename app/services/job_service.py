@@ -166,9 +166,11 @@ def _run_job_worker(job_id: str, user_id: str, cancel_event: threading.Event):
                             client.send_text(instance_name, instance_token, remote_jid, msg["content"])
                         )
 
-                    # Verificar respuesta
+                    # Verificar respuesta (Evolution v2 devuelve status "PENDING" en vez de 201)
                     status_code = resp.get("status", 200)
-                    if status_code not in (200, 201):
+                    if isinstance(status_code, str) and status_code == "PENDING":
+                        pass  # OK
+                    elif status_code not in (200, 201):
                         ok = False
                         error_detail = f"HTTP {status_code}: {resp.get('message', str(resp)[:200])}"
                 except Exception as e:
