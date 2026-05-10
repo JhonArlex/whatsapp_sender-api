@@ -26,7 +26,7 @@ from app.schedule_models import (
 )
 from app.scheduler import start_scheduler, store
 
-from app.routes import auth, connections, instances, groups, jobs as jobs_routes, messages, stats, templates
+from app.routes import auth, connections, instances, groups, jobs as jobs_routes, messages, stats, templates, schedules
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,6 +72,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 @app.on_event("startup")
 def startup_scheduler():
     start_scheduler()
+    # Iniciar scheduler de jobs programados
+    from app.services.scheduler_service import start_scheduler_daemon
+    start_scheduler_daemon()
 
 
 # ── Legacy Service Key Auth ─────────────────────────────────────────────
@@ -244,6 +247,7 @@ app.include_router(jobs_routes.router)
 app.include_router(messages.router)
 app.include_router(stats.router)
 app.include_router(templates.router)
+app.include_router(schedules.router)
 
 
 # ═══════════════════════════════════════════════════════════════════════
