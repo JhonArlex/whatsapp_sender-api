@@ -239,6 +239,15 @@ def _check_and_fire(sch: dict[str, Any]) -> bool:
         except (ValueError, TypeError):
             pass
 
+    # Verificar que EVOLUTION_API_KEY esté configurada antes de disparar
+    if not settings.evolution_api_key.strip():
+        logger.warning(
+            "Legacy schedule %s omitido: EVOLUTION_API_KEY no configurada. "
+            "Usa el nuevo sistema de schedules via /api/v1/jobs y /api/v1/schedules",
+            schedule_id,
+        )
+        return False
+
     # ¡Disparar!
     desde = sch.get("desde_fila", 1)
     job = jobs.start_new_job(desde=desde)

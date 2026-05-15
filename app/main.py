@@ -159,7 +159,7 @@ def listar_ultimos(
 # Rutas de Schedules (legacy + mejoradas)
 # ═══════════════════════════════════════════════════════════════════════
 
-@app.post("/api/v1/schedules", response_model=Schedule)
+@app.post("/api/v1/legacy/schedules", response_model=Schedule)
 def crear_schedule(
     body: CreateScheduleRequest,
     _: None = Depends(require_service_key),
@@ -194,7 +194,7 @@ def crear_schedule(
     return sch
 
 
-@app.get("/api/v1/schedules", response_model=ScheduleResponse)
+@app.get("/api/v1/legacy/schedules", response_model=ScheduleResponse)
 def listar_schedules(
     _: None = Depends(require_service_key),
 ) -> ScheduleResponse:
@@ -202,7 +202,7 @@ def listar_schedules(
     return ScheduleResponse(schedules=[Schedule(**s) for s in raw])
 
 
-@app.delete("/api/v1/schedules/{schedule_id}")
+@app.delete("/api/v1/legacy/schedules/{schedule_id}")
 def eliminar_schedule(
     schedule_id: str,
     _: None = Depends(require_service_key),
@@ -214,7 +214,7 @@ def eliminar_schedule(
     return {"ok": True}
 
 
-@app.put("/api/v1/schedules/{schedule_id}/toggle")
+@app.put("/api/v1/legacy/schedules/{schedule_id}/toggle")
 def toggle_schedule(
     schedule_id: str,
     _: None = Depends(require_service_key),
@@ -227,7 +227,7 @@ def toggle_schedule(
     return {"ok": True, "activo": nuevo_activo}
 
 
-@app.get("/api/v1/schedules/history", response_model=HistoryResponse)
+@app.get("/api/v1/legacy/schedules/history", response_model=HistoryResponse)
 def historial_schedules(
     _: None = Depends(require_service_key),
 ) -> HistoryResponse:

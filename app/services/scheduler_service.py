@@ -57,6 +57,26 @@ def create_schedule(
     if not job:
         raise ValueError("Job no encontrado")
 
+    # Validar que los grupos del job tengan instance_token e evolution_base_url
+    groups = query(
+        "SELECT id, instance_token, evolution_base_url "
+        "FROM job_groups WHERE job_id = %s",
+        (job_id,),
+    )
+    if not groups:
+        raise ValueError("El job no tiene grupos asociados")
+    for g in groups:
+        if not g.get("instance_token"):
+            raise ValueError(
+                f"El grupo {str(g['id'])[:8]} no tiene instance_token. "
+                "Todos los grupos deben tener un token de instancia válido para programar."
+            )
+        if not g.get("evolution_base_url"):
+            raise ValueError(
+                f"El grupo {str(g['id'])[:8]} no tiene evolution_base_url. "
+                "Todos los grupos deben tener una URL base de Evolution configurada."
+            )
+
     next_run = _calculate_next_run(schedule_type, run_date, run_time, days_of_week, interval_minutes, start_date)
 
     execute(
@@ -269,8 +289,11 @@ def _check_and_fire():
 
         # Recalcular próximo disparo
         r = query("SELECT * FROM job_schedules WHERE id = %s", (schedule_id,))[0]
+        # Convertir run_time de time object a string HH:MM si es necesario
+        raw_run_time = r.get("run_time")
+        run_time_str = str(raw_run_time) if raw_run_time else None
         next_run = _calculate_next_run(
-            r["schedule_type"], r.get("run_date"), r.get("run_time"),
+            r["schedule_type"], r.get("run_date"), run_time_str,
             r.get("days_of_week"), r["interval_minutes"], r.get("start_date"),
         )
         if next_run:

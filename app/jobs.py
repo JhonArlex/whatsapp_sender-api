@@ -139,7 +139,7 @@ class JobManager:
 
         if not settings.evolution_api_key.strip():
             job.state = JobState.error
-            job.mensaje_error = "EVOLUTION_API_KEY no configurada"
+            job.mensaje_error = "EVOLUTION_API_KEY no configurada — el scheduler legacy está inactivo. Usa el nuevo sistema de schedules via /api/v1/jobs"
             job.finalizado = datetime.now(timezone.utc)
             return
 
