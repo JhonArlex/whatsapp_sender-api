@@ -21,7 +21,12 @@ def list_all_jobs(
     limit: int = Query(20, ge=1, le=100),
     user: dict = Depends(get_current_user),
 ):
-    return list_jobs(str(user["id"]), status, page, limit)
+    return list_jobs(
+        user_id=str(user["id"]),
+        page=page,
+        limit=limit,
+        status_filter=status or None,
+    )
 
 
 @router.post("")
