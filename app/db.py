@@ -21,8 +21,8 @@ def get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     global _pool
     if _pool is None:
         _pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=5,
+            minconn=2,
+            maxconn=20,
             dsn=settings.database_url,
         )
     return _pool
@@ -68,11 +68,7 @@ def execute(sql: str, params: tuple | None = None) -> None:
 
 @contextmanager
 def transaction() -> Generator[psycopg2.extensions.connection, None, None]:
-    """Execute multiple operations in a single transaction.
-
-    The connection is yielded directly so the caller can manage its own
-    cursor and commit/rollback lifecycle.
-    """
+    """Execute multiple operations in a single transaction."""
     pool = get_pool()
     conn = pool.getconn()
     try:

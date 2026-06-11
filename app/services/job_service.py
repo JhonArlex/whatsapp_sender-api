@@ -1,4 +1,4 @@
-"""Servicio de jobs: creación, worker asíncrono, cancelación."""
+"""Servicio de jobs: creación, worker asíncrono optimizado con paralelismo."""
 
 from __future__ import annotations
 
@@ -97,8 +97,62 @@ def cancel_job(job_id: str, user_id: str) -> bool:
     return False
 
 
+def _send_to_single_group(group: dict, messages: list[dict], cancel_event: threading.Event) -> tuple[bool, str]:
+    """Envía todos los mensajes a un solo grupo. Usa su propio event loop."""
+    if cancel_event.is_set():
+        return False, "cancelado"
+
+    remote_jid = group["remote_jid"]
+    instance_name = group["instance_name"]
+    instance_token = group["instance_token"]
+    evo_base_url = group["evolution_base_url"]
+
+    client = EvolutionClient(evo_base_url, origin=settings.evolution_request_origin)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        for msg in messages:
+            if cancel_event.is_set():
+                return False, "cancelado"
+
+            try:
+                if msg["msg_type"] == "text":
+                    resp = loop.run_until_complete(
+                        client.send_text(instance_name, instance_token, remote_jid, msg["content"])
+                    )
+                elif msg["msg_type"] in ("image", "video", "document"):
+                    resp = loop.run_until_complete(
+                        client.send_media(
+                            instance_name, instance_token, remote_jid,
+                            caption=msg["content"],
+                            media_base64=msg["media_base64"],
+                            mimetype=msg["media_mimetype"],
+                            filename=msg["file_name"],
+                        )
+                    )
+                else:
+                    resp = loop.run_until_complete(
+                        client.send_text(instance_name, instance_token, remote_jid, msg["content"])
+                    )
+
+                status_code = resp.get("status", 200)
+                if isinstance(status_code, str) and status_code == "PENDING":
+                    continue
+                elif status_code not in (200, 201):
+                    return False, f"HTTP {status_code}: {resp.get('message', str(resp)[:200])}"
+            except Exception as e:
+                return False, str(e)[:500]
+
+            # Pequeña pausa entre mensajes del mismo grupo
+            time.sleep(1.5)
+
+        return True, ""
+    finally:
+        loop.close()
+
+
 def _run_job_worker(job_id: str, user_id: str, cancel_event: threading.Event):
-    """Worker que ejecuta un job en segundo plano."""
+    """Worker que ejecuta un job en segundo plano con paralelismo."""
     try:
         execute("UPDATE jobs SET status = 'running', started_at = NOW() WHERE id = %s", (job_id,))
 
@@ -117,131 +171,89 @@ def _run_job_worker(job_id: str, user_id: str, cancel_event: threading.Event):
         success = 0
         fails = 0
 
-        for g in groups:
-            if cancel_event.is_set():
-                execute(
-                    "UPDATE jobs SET status = 'cancelled', processed_groups = %s, success_count = %s, fail_count = %s, finished_at = NOW() WHERE id = %s",
-                    (processed, success, fails, job_id),
-                )
-                return
+        # Procesar grupos en paralelo (máximo 5 concurrentes)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            remote_jid = g["remote_jid"]
-            push_name = g["push_name"]
-            instance_name = g["instance_name"]
-            instance_token = g["instance_token"]
-            evo_base_url = g["evolution_base_url"]
-            group_id = str(g["id"])
+        with ThreadPoolExecutor(max_workers=min(5, len(groups) or 1)) as executor:
+            future_to_group = {}
+            for g in groups:
+                future = executor.submit(_send_to_single_group, g, messages, cancel_event)
+                future_to_group[future] = g
 
-            execute(
-                "UPDATE job_groups SET status = 'sending' WHERE id = %s",
-                (group_id,),
-            )
-
-            # Enviar mensajes
-            ok = True
-            error_detail = ""
-            for msg in messages:
+            for future in as_completed(future_to_group):
                 if cancel_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    execute(
+                        "UPDATE jobs SET status = 'cancelled', processed_groups = %s, success_count = %s, fail_count = %s, finished_at = NOW() WHERE id = %s",
+                        (processed, success, fails, job_id),
+                    )
                     return
 
-                client = EvolutionClient(evo_base_url, origin=settings.evolution_request_origin)
-                loop = asyncio.new_event_loop()
+                g = future_to_group[future]
+                group_id = str(g["id"])
                 try:
-                    if msg["msg_type"] == "text":
-                        resp = loop.run_until_complete(
-                            client.send_text(instance_name, instance_token, remote_jid, msg["content"])
-                        )
-                    elif msg["msg_type"] in ("image", "video", "document"):
-                        resp = loop.run_until_complete(
-                            client.send_media(
-                                instance_name, instance_token, remote_jid,
-                                caption=msg["content"],
-                                media_base64=msg["media_base64"],
-                                mimetype=msg["media_mimetype"],
-                                filename=msg["file_name"],
-                            )
-                        )
-                    else:
-                        resp = loop.run_until_complete(
-                            client.send_text(instance_name, instance_token, remote_jid, msg["content"])
-                        )
-
-                    # Verificar respuesta (Evolution v2 devuelve status "PENDING" en vez de 201)
-                    status_code = resp.get("status", 200)
-                    if isinstance(status_code, str) and status_code == "PENDING":
-                        pass  # OK
-                    elif status_code not in (200, 201):
-                        ok = False
-                        error_detail = f"HTTP {status_code}: {resp.get('message', str(resp)[:200])}"
+                    ok, error_detail = future.result(timeout=180)
                 except Exception as e:
                     ok = False
                     error_detail = str(e)[:500]
+
+                # Actualizar estado del grupo
+                group_status = "ok" if ok else "error"
+                execute(
+                    "UPDATE job_groups SET status = %s, detail = %s, sent_at = NOW() WHERE id = %s",
+                    (group_status, error_detail or None, group_id),
+                )
+
+                # Guardar en historial
+                execute(
+                    "INSERT INTO message_history (job_id, job_group_id, user_id, remote_jid, push_name, instance_name, "
+                    "msg_type, content, status, error_detail, sent_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())",
+                    (job_id, group_id, user_id, g["remote_jid"], g["push_name"], g["instance_name"],
+                     "mixed", json.dumps([m["content"] for m in messages] if messages else ""),
+                     group_status, error_detail or None),
+                )
+
+                processed += 1
+                if ok:
+                    success += 1
+                else:
+                    fails += 1
+
+                # Actualizar progreso
+                execute(
+                    "UPDATE jobs SET processed_groups = %s, success_count = %s, fail_count = %s WHERE id = %s",
+                    (processed, success, fails, job_id),
+                )
+
+                # Broadcast via WebSocket
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(_broadcast(job_id, {
+                        "type": "progress",
+                        "data": {
+                            "processed": processed,
+                            "total": total,
+                            "success": success,
+                            "fails": fails,
+                            "current_group": g["push_name"],
+                            "remote_jid": g["remote_jid"],
+                        },
+                    }))
+                    loop.run_until_complete(_broadcast(job_id, {
+                        "type": "group_update",
+                        "data": {
+                            "remote_jid": g["remote_jid"],
+                            "push_name": g["push_name"],
+                            "status": group_status,
+                            "detail": error_detail if not ok else None,
+                        },
+                    }))
                 finally:
                     loop.close()
 
-                if not ok:
-                    break
-
-                # Delay entre mensajes del mismo grupo
-                time.sleep(2)
-
-            # Actualizar estado del grupo
-            group_status = "ok" if ok else "error"
-            execute(
-                "UPDATE job_groups SET status = %s, detail = %s, sent_at = NOW() WHERE id = %s",
-                (group_status, error_detail or None, group_id),
-            )
-
-            # Guardar en historial
-            execute(
-                "INSERT INTO message_history (job_id, job_group_id, user_id, remote_jid, push_name, instance_name, "
-                "msg_type, content, status, error_detail, sent_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())",
-                (job_id, group_id, user_id, remote_jid, push_name, instance_name,
-                 "mixed", json.dumps([m["content"] for m in messages] if messages else ""),
-                 group_status, error_detail or None),
-            )
-
-            processed += 1
-            if ok:
-                success += 1
-            else:
-                fails += 1
-
-            # Actualizar progreso
-            execute(
-                "UPDATE jobs SET processed_groups = %s, success_count = %s, fail_count = %s WHERE id = %s",
-                (processed, success, fails, job_id),
-            )
-
-            # Broadcast via WebSocket
-            loop2 = asyncio.new_event_loop()
-            try:
-                loop2.run_until_complete(_broadcast(job_id, {
-                    "type": "progress",
-                    "data": {
-                        "processed": processed,
-                        "total": total,
-                        "success": success,
-                        "fails": fails,
-                        "current_group": push_name,
-                        "remote_jid": remote_jid,
-                    },
-                }))
-                loop2.run_until_complete(_broadcast(job_id, {
-                    "type": "group_update",
-                    "data": {
-                        "remote_jid": remote_jid,
-                        "push_name": push_name,
-                        "status": group_status,
-                        "detail": error_detail if not ok else None,
-                    },
-                }))
-            finally:
-                loop2.close()
-
-            # Delay entre grupos
-            time.sleep(3)
+                # Pequeña pausa entre lotes para no saturar
+                time.sleep(1)
 
         # Finalizar
         final_status = "completed" if fails == 0 else "completed_with_errors"
@@ -250,14 +262,14 @@ def _run_job_worker(job_id: str, user_id: str, cancel_event: threading.Event):
             (final_status, processed, success, fails, job_id),
         )
 
-        loop3 = asyncio.new_event_loop()
+        loop = asyncio.new_event_loop()
         try:
-            loop3.run_until_complete(_broadcast(job_id, {
+            loop.run_until_complete(_broadcast(job_id, {
                 "type": "completed",
                 "data": {"status": final_status, "success": success, "fails": fails, "total": total},
             }))
         finally:
-            loop3.close()
+            loop.close()
 
     except Exception as e:
         execute(
@@ -325,35 +337,15 @@ def get_job(job_id: str, user_id: str) -> dict | None:
     }
 
 
-def list_jobs(user_id: str, status_filter: str = "", page: int = 1, limit: int = 20) -> dict:
-    """Lista jobs del usuario con paginación."""
-    params: list[Any] = [user_id]
-    sql_count = "SELECT COUNT(*) as total FROM jobs WHERE user_id = %s"
-    sql = "SELECT id, name, status, total_groups, processed_groups, success_count, fail_count, error_message, started_at, finished_at, created_at FROM jobs WHERE user_id = %s"
-
-    if status_filter:
-        sql_count += " AND status = %s"
-        sql += " AND status = %s"
-        params.append(status_filter)
-
-    sql += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+def list_jobs(user_id: str, page: int = 1, limit: int = 20, status_filter: str | None = None) -> dict:
+    """Lista jobs con paginación."""
     offset = (page - 1) * limit
-    params.append(limit)
-    params.append(offset)
 
-    count_params = params[:2] if status_filter else params[:1]
-    count_params.append(status_filter) if status_filter else None
-    # rebuild
     if status_filter:
-        count_rows = query(f"SELECT COUNT(*) as total FROM jobs WHERE user_id = %s AND status = %s", (user_id, status_filter))
-    else:
-        count_rows = query(f"SELECT COUNT(*) as total FROM jobs WHERE user_id = %s", (user_id,))
-
-    total = count_rows[0]["total"] if count_rows else 0
-
-    rows = query(sql, tuple(p for p in [user_id, status_filter] if p) if status_filter else (user_id, limit, offset))
-    # Re-hacer query correctamente
-    if status_filter:
+        count_rows = query(
+            "SELECT COUNT(*) as total FROM jobs WHERE user_id = %s AND status = %s",
+            (user_id, status_filter),
+        )
         rows = query(
             "SELECT id, name, status, total_groups, processed_groups, success_count, fail_count, "
             "error_message, started_at, finished_at, created_at FROM jobs "
@@ -361,12 +353,18 @@ def list_jobs(user_id: str, status_filter: str = "", page: int = 1, limit: int =
             (user_id, status_filter, limit, offset),
         )
     else:
+        count_rows = query(
+            "SELECT COUNT(*) as total FROM jobs WHERE user_id = %s",
+            (user_id,),
+        )
         rows = query(
             "SELECT id, name, status, total_groups, processed_groups, success_count, fail_count, "
             "error_message, started_at, finished_at, created_at FROM jobs "
             "WHERE user_id = %s ORDER BY created_at DESC LIMIT %s OFFSET %s",
             (user_id, limit, offset),
         )
+
+    total = count_rows[0]["total"] if count_rows else 0
 
     return {
         "jobs": [
@@ -400,7 +398,6 @@ def retry_failed_groups(job_id: str, user_id: str) -> dict:
     if not failed_groups:
         return {"ok": False, "error": "No hay grupos fallidos para reintentar"}
 
-    # Crear un nuevo job con los grupos fallidos
     new_groups = []
     for g in failed_groups:
         rows = query(
