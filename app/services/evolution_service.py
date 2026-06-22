@@ -319,7 +319,7 @@ def get_instances(user_id: str) -> list[dict]:
 def sync_groups(user_id: str) -> list[dict]:
     """Sincroniza grupos desde todas las instancias del usuario."""
     instances = query(
-        """SELECT ic.id, ic.instance_name, ic.token, ec.base_url, ec.user_id
+        """SELECT ic.id, ic.instance_name, ic.token, ec.base_url, ec.user_id, ec.api_key_encrypted
            FROM instances_cache ic
            JOIN evolution_connections ec ON ec.id = ic.connection_id
            WHERE ec.user_id = %s AND ic.connection_status = 'open' AND ic.token != ''""",
@@ -328,6 +328,7 @@ def sync_groups(user_id: str) -> list[dict]:
 
     all_groups = []
 
+    from app.core.crypto import decrypt_api_key
     import asyncio
 
     async def _sync():
@@ -337,7 +338,8 @@ def sync_groups(user_id: str) -> list[dict]:
             base_url = inst["base_url"]
             inst_cache_id = str(inst["id"])
 
-            client = EvolutionClient(base_url, origin=settings.evolution_request_origin)
+            api_key = decrypt_api_key(inst["api_key_encrypted"]) if inst.get("api_key_encrypted") else settings.evolution_api_key
+            client = EvolutionClient(base_url, api_key, origin=settings.evolution_request_origin)
             chats = await client.find_chats(instance_name, token)
 
             for chat in chats:

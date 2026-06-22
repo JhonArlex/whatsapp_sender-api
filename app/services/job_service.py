@@ -107,7 +107,7 @@ def _send_to_single_group(group: dict, messages: list[dict], cancel_event: threa
     instance_token = group["instance_token"]
     evo_base_url = group["evolution_base_url"]
 
-    client = EvolutionClient(evo_base_url, origin=settings.evolution_request_origin)
+    client = EvolutionClient(evo_base_url, settings.evolution_api_key, origin=settings.evolution_request_origin)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:

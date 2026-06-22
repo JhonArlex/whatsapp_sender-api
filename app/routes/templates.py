@@ -144,7 +144,7 @@ def test_template(template_id: str, body: dict, user: dict = Depends(get_current
     base_url = rows[0]["base_url"]
     instance_token = rows[0]["token"]
 
-    client = _EC(base_url, origin=_settings.evolution_request_origin)
+    client = _EC(base_url, _settings.evolution_api_key, origin=_settings.evolution_request_origin)
 
     async def _send():
         msg = tpl.get("content", "")

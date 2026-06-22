@@ -156,9 +156,22 @@ def _calculate_next_run(
 ) -> str | None:
     """Calcula cuándo debería ejecutarse el schedule."""
     now = datetime.now(timezone.utc)
-    start = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc) if start_date else now
+
+    # start_date puede ser datetime (desde la BD) o string
+    if start_date:
+        if isinstance(start_date, datetime):
+            start = start_date
+        else:
+            start = datetime.fromisoformat(start_date)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+    else:
+        start = now
 
     if schedule_type == "once" and run_date:
+        # run_date puede ser datetime desde la BD
+        if isinstance(run_date, datetime):
+            return run_date.isoformat()
         return run_date
 
     if schedule_type == "daily" and run_time:
@@ -291,7 +304,13 @@ def _check_and_fire():
         r = query("SELECT * FROM job_schedules WHERE id = %s", (schedule_id,))[0]
         # Convertir run_time de time object a string HH:MM si es necesario
         raw_run_time = r.get("run_time")
-        run_time_str = str(raw_run_time) if raw_run_time else None
+        if raw_run_time is not None:
+            if hasattr(raw_run_time, "strftime"):
+                run_time_str = raw_run_time.strftime("%H:%M")
+            else:
+                run_time_str = str(raw_run_time)
+        else:
+            run_time_str = None
         next_run = _calculate_next_run(
             r["schedule_type"], r.get("run_date"), run_time_str,
             r.get("days_of_week"), r["interval_minutes"], r.get("start_date"),
