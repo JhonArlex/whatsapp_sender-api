@@ -143,8 +143,8 @@ def _send_to_single_group(group: dict, messages: list[dict], cancel_event: threa
             except Exception as e:
                 return False, str(e)[:500]
 
-            # Pequeña pausa entre mensajes del mismo grupo
-            time.sleep(1.5)
+            # Pausa entre mensajes del mismo grupo para evitar rate-limit (WhatsApp ~5-8s recomendado)
+            time.sleep(6)
 
         return True, ""
     finally:
@@ -171,10 +171,10 @@ def _run_job_worker(job_id: str, user_id: str, cancel_event: threading.Event):
         success = 0
         fails = 0
 
-        # Procesar grupos en paralelo (máximo 5 concurrentes)
+        # Procesar grupos secuencialmente para evitar rate-limit de WhatsApp
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        with ThreadPoolExecutor(max_workers=min(5, len(groups) or 1)) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             future_to_group = {}
             for g in groups:
                 future = executor.submit(_send_to_single_group, g, messages, cancel_event)
@@ -252,8 +252,8 @@ def _run_job_worker(job_id: str, user_id: str, cancel_event: threading.Event):
                 finally:
                     loop.close()
 
-                # Pequeña pausa entre lotes para no saturar
-                time.sleep(1)
+                # Pausa entre grupos para evitar rate-limit de WhatsApp
+                time.sleep(8)
 
         # Finalizar
         final_status = "completed" if fails == 0 else "completed_with_errors"
