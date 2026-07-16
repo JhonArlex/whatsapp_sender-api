@@ -18,17 +18,28 @@ _MIGRATIONS_DIR = Path(__file__).resolve().parent
 
 
 def _needs_migration() -> bool:
-    """True si la tabla 'users' no existe — señal de BD vacía."""
+    """True si alguna tabla o columna faltante requiere migración."""
     try:
         rows = query(
             "SELECT EXISTS (SELECT FROM information_schema.tables "
             "WHERE table_name = 'users') AS existe"
         )
-        if rows and rows[0]["existe"]:
-            return False
-        return True
+        if not rows or not rows[0]["existe"]:
+            return True  # BD vacía — necesita DDL completo
     except Exception:
         return True
+
+    # Verificar columnas que pudieron agregarse después del DDL inicial
+    try:
+        rows = query(
+            "SELECT EXISTS (SELECT FROM information_schema.columns "
+            "WHERE table_name = 'job_schedules' AND column_name = 'is_active') AS existe"
+        )
+        if rows and not rows[0]["existe"]:
+            return True  # Falta columna is_active
+    except Exception:
+        return True  # La tabla ni siquiera existe
+    return False
 
 
 def run_migrations() -> None:

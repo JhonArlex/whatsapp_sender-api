@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS job_schedules (
     end_date DATE,
     last_run TIMESTAMPTZ,
     next_run TIMESTAMPTZ,
+    is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -219,6 +220,9 @@ ALTER TABLE schedules ADD COLUMN IF NOT EXISTS message_template TEXT DEFAULT '';
 
 -- Modificar schedule_history
 ALTER TABLE schedule_history ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+
+-- Modificar job_schedules (si la tabla ya existe sin is_active)
+ALTER TABLE job_schedules ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
 
 -- 5. Índices -----------------------------------------------------------
 
