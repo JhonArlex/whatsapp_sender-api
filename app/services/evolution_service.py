@@ -340,15 +340,17 @@ def sync_groups(user_id: str) -> list[dict]:
 
             api_key = decrypt_api_key(inst["api_key_encrypted"]) if inst.get("api_key_encrypted") else settings.evolution_api_key
             client = EvolutionClient(base_url, api_key, origin=settings.evolution_request_origin)
-            chats = await client.find_chats(instance_name, token)
+            # Usar fetchAllGroups en vez de findChats para obtener TODOS los grupos
+            # (incluyendo grupos nuevos donde el usuario se unió desde el teléfono)
+            groups = await client.fetch_all_groups(instance_name, token)
 
-            for chat in chats:
-                remote_jid = chat.get("remoteJid", chat.get("id", ""))
-                # Solo grupos (@g.us), ignorar chats individuales
+            for group in groups:
+                remote_jid = group.get("id", group.get("remoteJid", group.get("jid", "")))
+                # Solo grupos (@g.us)
                 if not remote_jid.endswith("@g.us"):
                     continue
-                push_name = chat.get("pushName", chat.get("name", ""))
-                subject = chat.get("subject", push_name)
+                push_name = group.get("pushName", group.get("name", ""))
+                subject = group.get("subject", group.get("name", push_name))
 
                 existing = query(
                     "SELECT id FROM groups_cache WHERE instance_cache_id = %s AND remote_jid = %s",

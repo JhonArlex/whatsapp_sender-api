@@ -128,6 +128,35 @@ class EvolutionClient:
         except Exception:
             return None
 
+    async def fetch_all_groups(self, instance_name: str, instance_token: str, get_participants: bool = False) -> list[dict]:
+        """Obtiene TODOS los grupos del usuario desde WhatsApp (no solo los cacheados).
+
+        Evolution API: GET /group/fetchAllGroups/{instanceName}?getParticipants=true
+        A diferencia de find_chats, este endpoint consulta WhatsApp directamente
+        vía Baileys groupFetchAllParticipating, obteniendo grupos nuevos aunque
+        no hayan tenido actividad reciente.
+        """
+        try:
+            params = {}
+            if get_participants:
+                params["getParticipants"] = "true"
+            r = await self._client.get(
+                f"{self.base_url}/group/fetchAllGroups/{instance_name}",
+                headers=self._headers(instance_token),
+                params=params,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict) and "groups" in data:
+                    return data["groups"]
+                if isinstance(data, dict) and "records" in data:
+                    return data["records"]
+            return []
+        except Exception:
+            return []
+
     async def find_chats(self, instance_name: str, instance_token: str) -> list[dict]:
         try:
             r = await self._client.post(
