@@ -328,7 +328,6 @@ def sync_groups(user_id: str) -> list[dict]:
 
     all_groups = []
 
-    from app.core.crypto import decrypt_api_key
     import asyncio
 
     async def _sync():
@@ -340,35 +339,15 @@ def sync_groups(user_id: str) -> list[dict]:
 
             api_key = decrypt_api_key(inst["api_key_encrypted"]) if inst.get("api_key_encrypted") else settings.evolution_api_key
             client = EvolutionClient(base_url, api_key, origin=settings.evolution_request_origin)
-            # Intentar obtener grupos con fetchAllGroups (trae TODOS los grupos)
-            # Si falla, usar findChats como fallback
-            import logging
-            logger = logging.getLogger(__name__)
-            try:
-                groups_data = await client.fetch_all_groups(instance_name, token)
-                if not groups_data:
-                    logger.warning(
-                        "fetchAllGroups retornó vacío para %s, "
-                        "probando findChats como fallback",
-                        instance_name,
-                    )
-                    chats = await client.find_chats(instance_name, token)
-                    groups_data = [c for c in chats if c.get("remoteJid", c.get("id", "")).endswith("@g.us")]
-            except Exception as exc:
-                logger.warning(
-                    "fetchAllGroups falló para %s: %s. Usando findChats",
-                    instance_name, exc,
-                )
-                chats = await client.find_chats(instance_name, token)
-                groups_data = [c for c in chats if c.get("remoteJid", c.get("id", "")).endswith("@g.us")]
+            chats = await client.find_chats(instance_name, token)
 
-            for group in groups_data:
-                remote_jid = group.get("id", group.get("remoteJid", group.get("jid", "")))
+            for chat in chats:
+                remote_jid = chat.get("remoteJid", chat.get("id", ""))
                 # Solo grupos (@g.us)
                 if not remote_jid.endswith("@g.us"):
                     continue
-                push_name = group.get("pushName", group.get("name", ""))
-                subject = group.get("subject", group.get("name", push_name))
+                push_name = chat.get("pushName", chat.get("name", ""))
+                subject = chat.get("subject", push_name)
 
                 existing = query(
                     "SELECT id FROM groups_cache WHERE instance_cache_id = %s AND remote_jid = %s",
