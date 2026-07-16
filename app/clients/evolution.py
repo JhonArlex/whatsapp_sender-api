@@ -153,6 +153,17 @@ class EvolutionClient:
                     return data["groups"]
                 if isinstance(data, dict) and "records" in data:
                     return data["records"]
+                # Evolution API v2 devuelve un objeto {jid: metadata} desde
+                # Baileys groupFetchAllParticipating. Convertir a lista.
+                if isinstance(data, dict):
+                    groups = []
+                    for jid, metadata in data.items():
+                        if isinstance(metadata, dict):
+                            metadata.setdefault("id", jid)
+                            groups.append(metadata)
+                        else:
+                            groups.append({"id": jid, "subject": str(metadata)})
+                    return groups
             return []
         except Exception:
             return []
