@@ -71,6 +71,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 @app.on_event("startup")
 def startup_scheduler():
+    # Ejecutar migraciones de BD si es necesario
+    from app.migrations.runner import run_migrations
+    run_migrations()
+
     start_scheduler()
     # Iniciar scheduler de jobs programados
     from app.services.scheduler_service import start_scheduler_daemon

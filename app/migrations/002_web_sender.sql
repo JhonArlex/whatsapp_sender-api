@@ -2,6 +2,69 @@
 -- Migration 002: Web Sender - Login, Grupos Evolution, Jobs
 -- =============================================================
 
+-- Tabla de plantillas de mensajes
+CREATE TABLE IF NOT EXISTS message_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    msg_type VARCHAR(50) DEFAULT 'text',
+    content TEXT DEFAULT '',
+    media_url TEXT DEFAULT '',
+    link_url TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Tabla de API tokens (legacy)
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token VARCHAR(255) NOT NULL,
+    activo BOOLEAN DEFAULT true,
+    ultimo_uso TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Tabla de programaciones de jobs (nuevo scheduler)
+CREATE TABLE IF NOT EXISTS job_schedules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id),
+    schedule_type VARCHAR(50) NOT NULL DEFAULT 'once',
+    run_date DATE,
+    run_time TIME,
+    days_of_week TEXT[] DEFAULT '{}',
+    interval_minutes INT DEFAULT 0,
+    start_date DATE,
+    end_date DATE,
+    last_run TIMESTAMPTZ,
+    next_run TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Tabla de schedules (envíos programados)
+CREATE TABLE IF NOT EXISTS schedules (
+    id UUID PRIMARY KEY,
+    hora VARCHAR(5) NOT NULL,
+    dias_semana JSONB DEFAULT '[]'::jsonb,
+    desde_fila INT DEFAULT 1,
+    activo BOOLEAN DEFAULT true,
+    ultima_ejecucion TIMESTAMPTZ,
+    creado TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Tabla de historial de schedules
+CREATE TABLE IF NOT EXISTS schedule_history (
+    id UUID PRIMARY KEY,
+    schedule_id UUID,
+    hora_programada VARCHAR(5) NOT NULL,
+    ejecutado_en TIMESTAMPTZ DEFAULT NOW(),
+    finalizado_en TIMESTAMPTZ,
+    job_id UUID,
+    estado VARCHAR(50) DEFAULT 'pendiente',
+    detalle TEXT
+);
+
 -- Tabla de usuarios
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
