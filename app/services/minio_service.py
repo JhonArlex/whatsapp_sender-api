@@ -13,9 +13,12 @@ from app.config import settings
 
 def _get_client():
     """Crea un cliente S3 apuntando a MinIO."""
+    endpoint = settings.minio_endpoint
+    if not endpoint.startswith("http://") and not endpoint.startswith("https://"):
+        endpoint = f"https://{endpoint}"
     return boto3.client(
         "s3",
-        endpoint_url=f"http://{settings.minio_endpoint}",
+        endpoint_url=endpoint,
         aws_access_key_id=settings.minio_access_key,
         aws_secret_access_key=settings.minio_secret_key,
         config=BotoConfig(signature_version="s3v4"),

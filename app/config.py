@@ -60,7 +60,12 @@ class Settings(BaseSettings):
     @property
     def evolution_request_origins_list(self) -> list[str]:
         raw = self.evolution_request_origin or ""
-        return [p.strip().rstrip("/") for p in raw.split(",") if p.strip()]
+        origins = [p.strip().rstrip("/") for p in raw.split(",") if p.strip()]
+        if not origins:
+            # Fallback: usar CORS_ORIGINS si no se configuró EVOLUTION_REQUEST_ORIGIN
+            raw_fallback = self.cors_origins or ""
+            origins = [p.strip().rstrip("/") for p in raw_fallback.split(",") if p.strip()]
+        return origins
 
     @property
     def csv_path(self) -> Path:
