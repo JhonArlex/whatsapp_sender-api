@@ -226,7 +226,7 @@ class EvolutionClient:
         }
         r = await self._client.post(
             f"{self.base_url}/message/sendMedia/{instance_name}",
-            headers=self._headers(),
+            headers=self._headers(instance_token),
             json=payload,
         )
         try:
@@ -249,7 +249,7 @@ class EvolutionClient:
         }
         r = await self._client.post(
             f"{self.base_url}/message/sendText/{instance_name}",
-            headers=self._headers(),
+            headers=self._headers(instance_token),
             json=payload,
         )
         try:
