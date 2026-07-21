@@ -10,3 +10,4 @@ data/*
 # CSV de grupos (versionar si el despliegue lo requiere; contiene datos sensibles)
 !data/grupos_chinatowm.csv
 .DS_Store
+# Force redeploy with auth fix
