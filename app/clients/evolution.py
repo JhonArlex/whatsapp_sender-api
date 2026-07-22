@@ -36,7 +36,8 @@ class EvolutionClient:
 
     def _headers(self, api_key: str | None = None) -> dict[str, str]:
         headers = {}
-        key = api_key or self.global_api_key
+        # Priorizar global_api_key cuando está configurada (server-level auth)
+        key = self.global_api_key or api_key
         if key:
             headers["apikey"] = key
         if self.origin:
