@@ -169,10 +169,23 @@ def _calculate_next_run(
         start = now
 
     if schedule_type == "once" and run_date:
-        # run_date puede ser datetime desde la BD
+        # run_date puede ser datetime desde la BD o string ISO
         if isinstance(run_date, datetime):
-            return run_date.isoformat()
-        return run_date
+            run_dt = run_date
+        else:
+            try:
+                run_dt = datetime.fromisoformat(str(run_date).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if run_dt.tzinfo is None:
+            run_dt = run_dt.replace(tzinfo=timezone.utc)
+        if run_dt <= now:
+            # Schedule 'once' ya vencido: no reprogramar. Retornar None hace
+            # que _check_and_fire lo desactive (is_active=false) en vez de
+            # dispararlo cada 30s para siempre (bug: saturaba threads y
+            # mataba el event loop de uvicorn → 502 en login).
+            return None
+        return run_dt.isoformat()
 
     if schedule_type == "daily" and run_time:
         hour, minute = map(int, run_time.split(":"))
