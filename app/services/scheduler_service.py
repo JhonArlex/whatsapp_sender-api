@@ -190,7 +190,8 @@ def _calculate_next_run(
     if schedule_type == "daily" and run_time:
         hour, minute = map(int, run_time.split(":"))
         candidate = start.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate <= now:
+        # Avanzar hasta el primer día futuro (start puede estar muy atrás)
+        while candidate <= now:
             candidate += timedelta(days=1)
         return candidate.isoformat()
 
@@ -198,7 +199,7 @@ def _calculate_next_run(
         day_map = {"dom": 0, "lun": 1, "mar": 2, "mie": 3, "jue": 4, "vie": 5, "sab": 6}
         hour, minute = map(int, run_time.split(":"))
         base = start.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        for _ in range(14):
+        for _ in range(400):
             day_name = list(day_map.keys())[list(day_map.values()).index(base.weekday())]
             if day_name in days_of_week and base > now:
                 return base.isoformat()
