@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from app.clients.evolution import EvolutionClient
 from app.config import settings
 from app.core.crypto import decrypt_api_key, encrypt_api_key
 from app.db import execute, query
+
+logger = logging.getLogger(__name__)
 
 
 # ── Conexiones ──────────────────────────────────────────────────────────
@@ -317,7 +320,13 @@ def get_instances(user_id: str) -> list[dict]:
 
 
 def sync_groups(user_id: str) -> list[dict]:
-    """Sincroniza grupos desde todas las instancias del usuario."""
+    """Sincroniza grupos desde todas las instancias del usuario.
+
+    Usa ``fetch_all_groups`` (membresía REAL en WhatsApp, vía Baileys
+    groupFetchAllParticipating) en vez de ``find_chats`` (historial de chats local de
+    Evolution). ``find_chats`` omite grupos nuevos sin actividad y conserva grupos de
+    los que el usuario ya salió, por eso el conteo "no se actualizaba".
+    """
     instances = query(
         """SELECT ic.id, ic.instance_name, ic.token, ec.base_url, ec.user_id, ec.api_key_encrypted
            FROM instances_cache ic
@@ -339,21 +348,38 @@ def sync_groups(user_id: str) -> list[dict]:
 
             api_key = decrypt_api_key(inst["api_key_encrypted"]) if inst.get("api_key_encrypted") else settings.evolution_api_key
             client = EvolutionClient(base_url, api_key, origin=settings.evolution_request_origin)
-            chats = await client.find_chats(instance_name, token)
+            try:
+                groups = await client.fetch_all_groups(instance_name, token)
+            finally:
+                await client.close()
 
-            for chat in chats:
-                remote_jid = chat.get("remoteJid", chat.get("id", ""))
+            if groups is None:
+                # Fallo transitorio de Evolution/WhatsApp (timeout, 5xx, etc.):
+                # NO tocar la cache de esta instancia para no borrar grupos reales.
+                logger.warning(
+                    "sync_groups: fetch_all_groups devolvió None para %s; se omite la instancia",
+                    instance_name,
+                )
+                continue
+
+            now = datetime.now(timezone.utc)
+            live_jids: set[str] = set()
+
+            for g in groups:
+                remote_jid = str(g.get("id") or g.get("remoteJid") or g.get("jid") or "")
                 # Solo grupos (@g.us)
                 if not remote_jid.endswith("@g.us"):
                     continue
-                push_name = chat.get("pushName", chat.get("name", ""))
-                subject = chat.get("subject", push_name)
+                live_jids.add(remote_jid)
+                # fetchAllGroups no devuelve pushName (el nombre del grupo es `subject`);
+                # se usa como fallback para que push_name no quede vacío (la UI ordena por él).
+                subject = g.get("subject") or g.get("name") or ""
+                push_name = g.get("pushName") or subject
 
                 existing = query(
                     "SELECT id FROM groups_cache WHERE instance_cache_id = %s AND remote_jid = %s",
                     (inst_cache_id, remote_jid),
                 )
-                now = datetime.now(timezone.utc)
                 if existing:
                     execute(
                         "UPDATE groups_cache SET push_name=%s, subject=%s, synced_at=%s WHERE id=%s",
@@ -371,6 +397,23 @@ def sync_groups(user_id: str) -> list[dict]:
                     "push_name": push_name,
                     "subject": subject,
                 })
+
+            # Reconciliación: eliminar de la cache los grupos de esta instancia que ya
+            # no aparecen en la lista viva (fantasmas de grupos abandonados). Solo se
+            # ejecuta si el fetch trajo datos, para no vaciar la cache por un fallo.
+            if live_jids:
+                removed = query(
+                    "DELETE FROM groups_cache WHERE instance_cache_id = %s "
+                    "AND NOT (remote_jid = ANY(%s)) RETURNING remote_jid",
+                    (inst_cache_id, list(live_jids)),
+                )
+                if removed:
+                    logger.info(
+                        "sync_groups(%s): %d grupos fantasma eliminados",
+                        instance_name,
+                        len(removed),
+                    )
+
         return all_groups
 
     return asyncio.run(_sync())

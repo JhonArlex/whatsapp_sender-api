@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class EvolutionClient:
@@ -129,45 +132,70 @@ class EvolutionClient:
         except Exception:
             return None
 
-    async def fetch_all_groups(self, instance_name: str, instance_token: str, get_participants: bool = False) -> list[dict]:
+    # fetchAllGroups consulta WhatsApp en vivo (Baileys groupFetchAllParticipating).
+    # Con cientos de grupos Evolution tarda ~2 min, así que usa su propio timeout,
+    # mucho mayor que el general (90s) — si no, la petición expira y el resultado se
+    # pierde en silencio (fallback a []).
+    GROUPS_TIMEOUT = httpx.Timeout(300.0, connect=30.0)
+
+    async def fetch_all_groups(
+        self,
+        instance_name: str,
+        instance_token: str,
+        get_participants: bool = False,
+    ) -> list[dict] | None:
         """Obtiene TODOS los grupos del usuario desde WhatsApp (no solo los cacheados).
 
-        Evolution API: GET /group/fetchAllGroups/{instanceName}?getParticipants=true
+        Evolution API: GET /group/fetchAllGroups/{instanceName}?getParticipants=false
         A diferencia de find_chats, este endpoint consulta WhatsApp directamente
         vía Baileys groupFetchAllParticipating, obteniendo grupos nuevos aunque
         no hayan tenido actividad reciente.
+
+        ``getParticipants`` es OBLIGATORIO en Evolution v2: sin el parámetro responde
+        ``400 The getParticipants needs to be informed in the query``, por eso se envía
+        siempre (``false`` = lista liviana sin participantes).
+
+        Devuelve ``None`` si la petición falla (no-200, timeout o excepción) para que el
+        llamador distinga un error transitorio de "el usuario no tiene grupos" y NO borre
+        la cache ante un fallo puntual de WhatsApp.
         """
         try:
-            params = {}
-            if get_participants:
-                params["getParticipants"] = "true"
             r = await self._client.get(
                 f"{self.base_url}/group/fetchAllGroups/{instance_name}",
                 headers=self._headers(instance_token),
-                params=params,
+                params={"getParticipants": "true" if get_participants else "false"},
+                timeout=self.GROUPS_TIMEOUT,
             )
-            if r.status_code == 200:
-                data = r.json()
-                if isinstance(data, list):
-                    return data
-                if isinstance(data, dict) and "groups" in data:
-                    return data["groups"]
-                if isinstance(data, dict) and "records" in data:
-                    return data["records"]
-                # Evolution API v2 devuelve un objeto {jid: metadata} desde
-                # Baileys groupFetchAllParticipating. Convertir a lista.
-                if isinstance(data, dict):
-                    groups = []
-                    for jid, metadata in data.items():
-                        if isinstance(metadata, dict):
-                            metadata.setdefault("id", jid)
-                            groups.append(metadata)
-                        else:
-                            groups.append({"id": jid, "subject": str(metadata)})
-                    return groups
+            if r.status_code != 200:
+                logger.warning(
+                    "fetch_all_groups(%s): HTTP %s -> %s",
+                    instance_name,
+                    r.status_code,
+                    r.text[:200],
+                )
+                return None
+            data = r.json()
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict) and "groups" in data:
+                return data["groups"]
+            if isinstance(data, dict) and "records" in data:
+                return data["records"]
+            # Evolution API v2 devuelve un objeto {jid: metadata} desde
+            # Baileys groupFetchAllParticipating. Convertir a lista.
+            if isinstance(data, dict):
+                groups = []
+                for jid, metadata in data.items():
+                    if isinstance(metadata, dict):
+                        metadata.setdefault("id", jid)
+                        groups.append(metadata)
+                    else:
+                        groups.append({"id": jid, "subject": str(metadata)})
+                return groups
             return []
         except Exception:
-            return []
+            logger.exception("fetch_all_groups(%s) falló", instance_name)
+            return None
 
     async def find_chats(self, instance_name: str, instance_token: str) -> list[dict]:
         try:
