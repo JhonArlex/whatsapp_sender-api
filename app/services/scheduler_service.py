@@ -303,8 +303,8 @@ def list_schedule_history(user_id: str, limit: int = 50) -> list[dict]:
     rows = query(
         "SELECT sh.*, js.schedule_type, j.name AS job_name "
         "FROM schedule_history sh "
-        "JOIN job_schedules js ON js.id = sh.schedule_id "
-        "JOIN jobs j ON j.id = sh.job_id "
+        "JOIN job_schedules js ON js.id::text = sh.schedule_id::text "
+        "JOIN jobs j ON j.id::text = sh.job_id::text "
         "WHERE js.user_id = %s "
         "ORDER BY sh.ejecutado_en DESC LIMIT %s",
         (user_id, limit),
@@ -618,7 +618,7 @@ def _refresh_schedule_history() -> None:
                detalle = COALESCE(NULLIF(j.error_message, ''), sh.detalle),
                finalizado_en = COALESCE(j.finished_at, NOW())
            FROM jobs j
-           WHERE j.id = sh.job_id
+           WHERE j.id::text = sh.job_id::text
              AND sh.estado = 'ejecutando'
              AND j.status NOT IN ('pending', 'running')"""
     )
