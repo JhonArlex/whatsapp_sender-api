@@ -301,12 +301,12 @@ def delete_schedule(schedule_id: str, user_id: str) -> bool:
 def list_schedule_history(user_id: str, limit: int = 50) -> list[dict]:
     """Historial de ejecuciones del scheduler (últimas N)."""
     rows = query(
-        "SELECT sh.*, js.schedule_type, j.name AS job_name "
-        "FROM schedule_history sh "
-        "JOIN job_schedules js ON js.id::text = sh.schedule_id::text "
-        "JOIN jobs j ON j.id::text = sh.job_id::text "
+        "SELECT sr.*, js.schedule_type, j.name AS job_name "
+        "FROM schedule_runs sr "
+        "JOIN job_schedules js ON js.id = sr.schedule_id "
+        "LEFT JOIN jobs j ON j.id = sr.job_id "
         "WHERE js.user_id = %s "
-        "ORDER BY sh.ejecutado_en DESC LIMIT %s",
+        "ORDER BY sr.ejecutado_en DESC LIMIT %s",
         (user_id, limit),
     )
     out = []
@@ -503,22 +503,6 @@ def _fire_schedule(schedule: dict, now: datetime) -> None:
     )
     new_job_id = created["id"]
 
-    # Registrar ejecución en el historial de programaciones
-    execute(
-        """INSERT INTO schedule_history
-           (id, schedule_id, user_id, hora_programada, ejecutado_en, job_id, estado, detalle)
-           VALUES (%s, %s, %s, %s, %s, %s, 'ejecutando', %s)""",
-        (
-            str(uuid.uuid4()),
-            schedule_id,
-            user_id,
-            now.astimezone(_local_tz()).strftime("%H:%M"),
-            now,
-            new_job_id,
-            "Ejecución programada",
-        ),
-    )
-
     # Recalcular próximo disparo
     run_time = schedule.get("run_time")
     next_run = _calculate_next_run(
@@ -531,6 +515,9 @@ def _fire_schedule(schedule: dict, now: datetime) -> None:
         schedule.get("end_date"),
     )
 
+    # IMPORTANTE: avanzar la programación ANTES de registrar historial.
+    # Si el registro fallara, el schedule ya quedó reprogramado y no se
+    # dispara en bucle cada 30 s creando jobs duplicados.
     if next_run:
         execute(
             "UPDATE job_schedules SET last_run = %s, last_job_id = %s, last_status = 'pending', "
@@ -546,9 +533,26 @@ def _fire_schedule(schedule: dict, now: datetime) -> None:
         )
         logger.info("Programación %s completada — desactivada (sin próxima ejecución)", schedule_id)
 
-    logger.info("Programación %s disparó el job %s", schedule_id, new_job_id[:8])
+    # Registrar ejecución en el historial (no debe bloquear la ejecución)
+    try:
+        execute(
+            """INSERT INTO schedule_runs
+               (id, schedule_id, user_id, hora_programada, ejecutado_en, job_id, estado, detalle)
+               VALUES (%s, %s, %s, %s, %s, %s, 'ejecutando', %s)""",
+            (
+                str(uuid.uuid4()),
+                schedule_id,
+                user_id,
+                now.astimezone(_local_tz()).strftime("%H:%M"),
+                now,
+                new_job_id,
+                "Ejecución programada",
+            ),
+        )
+    except Exception:
+        logger.exception("No se pudo registrar la ejecución de la programación %s", schedule_id)
 
-    # Actualizar next_run si es recurrente
+    logger.info("Programación %s disparó el job %s", schedule_id, new_job_id[:8])
     if next_run:
         logger.info("  próxima ejecución: %s", next_run.isoformat())
 
@@ -590,36 +594,39 @@ def run_schedule_now(schedule_id: str, user_id: str) -> dict:
     )
 
     execute(
-        """INSERT INTO schedule_history
-           (id, schedule_id, user_id, hora_programada, ejecutado_en, job_id, estado, detalle)
-           VALUES (%s, %s, %s, %s, %s, %s, 'ejecutando', 'Ejecución manual')""",
-        (
-            str(uuid.uuid4()),
-            schedule_id,
-            user_id,
-            now.astimezone(_local_tz()).strftime("%H:%M"),
-            now,
-            created["id"],
-        ),
-    )
-    execute(
         "UPDATE job_schedules SET last_run = %s, last_job_id = %s, last_status = 'pending', "
         "updated_at = NOW() WHERE id = %s",
         (now, created["id"], schedule_id),
     )
+    try:
+        execute(
+            """INSERT INTO schedule_runs
+               (id, schedule_id, user_id, hora_programada, ejecutado_en, job_id, estado, detalle)
+               VALUES (%s, %s, %s, %s, %s, %s, 'ejecutando', 'Ejecución manual')""",
+            (
+                str(uuid.uuid4()),
+                schedule_id,
+                user_id,
+                now.astimezone(_local_tz()).strftime("%H:%M"),
+                now,
+                created["id"],
+            ),
+        )
+    except Exception:
+        logger.exception("No se pudo registrar la ejecución manual de %s", schedule_id)
     return {"ok": True, "message": "Job ejecutado", "job": created}
 
 
 def _refresh_schedule_history() -> None:
-    """Cierra las filas de historial cuyos jobs ya terminaron."""
+    """Cierra las filas del historial cuyos jobs ya terminaron."""
     execute(
-        """UPDATE schedule_history sh
+        """UPDATE schedule_runs sr
            SET estado = j.status,
-               detalle = COALESCE(NULLIF(j.error_message, ''), sh.detalle),
+               detalle = COALESCE(NULLIF(j.error_message, ''), sr.detalle),
                finalizado_en = COALESCE(j.finished_at, NOW())
            FROM jobs j
-           WHERE j.id::text = sh.job_id::text
-             AND sh.estado = 'ejecutando'
+           WHERE j.id = sr.job_id
+             AND sr.estado = 'ejecutando'
              AND j.status NOT IN ('pending', 'running')"""
     )
     execute(
