@@ -33,23 +33,95 @@ DAY_MAP = {"lun": 0, "mar": 1, "mie": 2, "jue": 3, "vie": 4, "sab": 5, "dom": 6}
 _DAY_NAMES = {v: k for k, v in DAY_MAP.items()}
 
 
+# Zonas horarias soportadas por la UI (nombre IANA + etiqueta).
+# Se puede usar cualquier zona IANA válida vía API; esta lista es la que
+# se ofrece en el selector.
+SUPPORTED_TIMEZONES = [
+    {"value": "America/Bogota", "label": "Colombia (Bogotá)", "country": "CO"},
+    {"value": "America/Santiago", "label": "Chile (Santiago)", "country": "CL"},
+    {"value": "America/Lima", "label": "Perú (Lima)", "country": "PE"},
+    {"value": "America/Mexico_City", "label": "México (CDMX)", "country": "MX"},
+    {"value": "America/Argentina/Buenos_Aires", "label": "Argentina (Buenos Aires)", "country": "AR"},
+    {"value": "America/Panama", "label": "Panamá", "country": "PA"},
+    {"value": "America/Guayaquil", "label": "Ecuador (Guayaquil)", "country": "EC"},
+    {"value": "America/Caracas", "label": "Venezuela (Caracas)", "country": "VE"},
+    {"value": "America/Sao_Paulo", "label": "Brasil (São Paulo)", "country": "BR"},
+    {"value": "UTC", "label": "UTC", "country": ""},
+]
+
+_TZ_LABELS = {z["value"]: z["label"] for z in SUPPORTED_TIMEZONES}
+_TZ_SHORT = {
+    "America/Bogota": "Colombia",
+    "America/Santiago": "Chile",
+    "America/Lima": "Perú",
+    "America/Mexico_City": "México",
+    "America/Argentina/Buenos_Aires": "Argentina",
+    "America/Panama": "Panamá",
+    "America/Guayaquil": "Ecuador",
+    "America/Caracas": "Venezuela",
+    "America/Sao_Paulo": "Brasil",
+    "UTC": "UTC",
+}
+
+
 def _local_tz() -> ZoneInfo:
+    """Zona horaria global del servidor (TIMEZONE)."""
     try:
         return ZoneInfo(settings.timezone or "America/Bogota")
-    except ZoneInfoNotFoundError:  # pragma: no cover
+    except (ZoneInfoNotFoundError, ValueError):
         logger.warning("Zona horaria %s inválida — usando UTC", settings.timezone)
         return ZoneInfo("UTC")
+
+
+def _resolve_tz(name: Any = None) -> ZoneInfo:
+    """Devuelve la ZoneInfo de un schedule o la global si viene vacía."""
+    candidate = str(name).strip() if name else ""
+    if not candidate:
+        return _local_tz()
+    try:
+        return ZoneInfo(candidate)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("Zona horaria %s desconocida — usando la global", candidate)
+        return _local_tz()
+
+
+def tz_label(name: Any = None) -> str:
+    """Etiqueta legible ('Colombia', 'Chile', ...) de una zona."""
+    candidate = str(name).strip() if name else ""
+    resolved = candidate or (settings.timezone or "America/Bogota")
+    return _TZ_SHORT.get(resolved) or _TZ_LABELS.get(resolved) or resolved
+
+
+def _validate_timezone(name: Any = None) -> tuple[str, ZoneInfo]:
+    """Valida una zona IANA. Devuelve (valor_a_guardar, ZoneInfo).
+
+    Vacío/NULL → se guarda '' y se usa la zona global del servidor.
+    """
+    candidate = str(name).strip() if name else ""
+    if not candidate:
+        return "", _local_tz()
+    try:
+        return candidate, ZoneInfo(candidate)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError(
+            f"Zona horaria inválida: {candidate}. "
+            "Usa un nombre IANA como America/Bogota o America/Santiago."
+        )
 
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _as_utc(value: Any, *, end_of_day: bool = False) -> datetime | None:
-    """Convierte date/datetime/str a datetime UTC (naive = hora local)."""
+def _as_utc(value: Any, *, end_of_day: bool = False, tz: ZoneInfo | None = None) -> datetime | None:
+    """Convierte date/datetime/str a datetime UTC.
+
+    Un valor *naive* (sin offset) se interpreta en la zona ``tz`` (o en la
+    global si no se indica). Un valor con offset/Z se respeta tal cual.
+    """
     if value is None or value == "":
         return None
-    tz = _local_tz()
+    zone = tz or _local_tz()
     if isinstance(value, datetime):
         dt = value
     elif isinstance(value, date):
@@ -64,8 +136,9 @@ def _as_utc(value: Any, *, end_of_day: bool = False) -> datetime | None:
             except ValueError:
                 return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=tz)
+        dt = dt.replace(tzinfo=zone)
     return dt.astimezone(timezone.utc)
+
 
 
 def _parse_hhmm(run_time: Any) -> tuple[int, int] | None:
@@ -128,8 +201,13 @@ def create_schedule(
     interval_minutes: int = 0,
     start_date: str | None = None,
     end_date: str | None = None,
+    timezone_name: str | None = None,
 ) -> dict:
     """Crea una programación y calcula el próximo disparo.
+
+    ``timezone_name``: zona IANA en la que se interpretan las horas (ej.
+    ``America/Santiago`` o ``America/Bogota``). Vacío = zona global del
+    servidor.
 
     Lanza ``ValueError`` con un mensaje claro si los datos no permiten
     programar (job inexistente/archivado, grupos sin token, fecha vencida...).
@@ -165,6 +243,8 @@ def create_schedule(
     if schedule_type not in ("once", "daily", "weekly", "interval"):
         raise ValueError("Tipo de programación inválido (once | daily | weekly | interval)")
 
+    tz_value, tz = _validate_timezone(timezone_name)
+
     days = _normalize_days(days_of_week)
     if schedule_type == "weekly" and not days:
         raise ValueError("Selecciona al menos un día de la semana")
@@ -174,7 +254,8 @@ def create_schedule(
         raise ValueError("El intervalo debe ser mayor a 0 minutos")
 
     next_run = _calculate_next_run(
-        schedule_type, run_date, run_time, days, int(interval_minutes or 0), start_date, end_date
+        schedule_type, run_date, run_time, days, int(interval_minutes or 0), start_date, end_date,
+        timezone_name=tz_value,
     )
     if not next_run:
         if schedule_type == "once":
@@ -185,20 +266,21 @@ def create_schedule(
     execute(
         """INSERT INTO job_schedules
            (id, job_id, user_id, schedule_type, run_date, run_time, days_of_week,
-            interval_minutes, start_date, end_date, next_run, is_active)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)""",
+            interval_minutes, start_date, end_date, next_run, timezone, is_active)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)""",
         (
             schedule_id,
             job_id,
             user_id,
             schedule_type,
-            _as_utc(run_date),
+            _as_utc(run_date, tz=tz),
             run_time or None,
             days,
             int(interval_minutes or 0),
-            _as_utc(start_date) or _now_utc(),
-            _as_utc(end_date, end_of_day=True),
+            _as_utc(start_date, tz=tz) or _now_utc(),
+            _as_utc(end_date, end_of_day=True, tz=tz),
             next_run,
+            tz_value,
         ),
     )
 
@@ -222,7 +304,11 @@ def update_schedule(schedule_id: str, user_id: str, **kwargs) -> dict | None:
         "interval_minutes": int(kwargs.get("interval_minutes", current.get("interval_minutes") or 0)),
         "start_date": kwargs.get("start_date", current.get("start_date")),
         "end_date": kwargs.get("end_date", current.get("end_date")),
+        "timezone": kwargs.get("timezone", current.get("timezone")),
     }
+
+    tz_value, tz = _validate_timezone(fields["timezone"])
+    fields["timezone"] = tz_value
 
     next_run = _calculate_next_run(
         fields["schedule_type"],
@@ -232,22 +318,24 @@ def update_schedule(schedule_id: str, user_id: str, **kwargs) -> dict | None:
         fields["interval_minutes"],
         fields["start_date"],
         fields["end_date"],
+        timezone_name=tz_value,
     )
 
     execute(
         """UPDATE job_schedules SET schedule_type = %s, run_date = %s, run_time = %s,
            days_of_week = %s, interval_minutes = %s, start_date = %s, end_date = %s,
-           next_run = %s, updated_at = NOW()
+           next_run = %s, timezone = %s, updated_at = NOW()
            WHERE id = %s AND user_id = %s""",
         (
             fields["schedule_type"],
-            _as_utc(fields["run_date"]),
+            _as_utc(fields["run_date"], tz=tz),
             fields["run_time"] or None,
             fields["days_of_week"],
             fields["interval_minutes"],
-            _as_utc(fields["start_date"]) or _now_utc(),
-            _as_utc(fields["end_date"], end_of_day=True),
+            _as_utc(fields["start_date"], tz=tz) or _now_utc(),
+            _as_utc(fields["end_date"], end_of_day=True, tz=tz),
             next_run,
+            tz_value,
             schedule_id,
             user_id,
         ),
@@ -277,6 +365,7 @@ def toggle_schedule(schedule_id: str, user_id: str, is_active: bool | None = Non
             int(current.get("interval_minutes") or 0),
             current.get("start_date"),
             current.get("end_date"),
+            timezone_name=current.get("timezone"),
         )
 
     execute(
@@ -301,7 +390,7 @@ def delete_schedule(schedule_id: str, user_id: str) -> bool:
 def list_schedule_history(user_id: str, limit: int = 50) -> list[dict]:
     """Historial de ejecuciones del scheduler (últimas N)."""
     rows = query(
-        "SELECT sr.*, js.schedule_type, j.name AS job_name "
+        "SELECT sr.*, js.schedule_type, js.timezone, j.name AS job_name "
         "FROM schedule_runs sr "
         "JOIN job_schedules js ON js.id = sr.schedule_id "
         "LEFT JOIN jobs j ON j.id = sr.job_id "
@@ -318,6 +407,8 @@ def list_schedule_history(user_id: str, limit: int = 50) -> list[dict]:
                 "job_id": str(r["job_id"]) if r.get("job_id") else None,
                 "job_name": r.get("job_name") or "",
                 "schedule_type": r.get("schedule_type") or "",
+                "timezone": r.get("timezone") or "",
+                "timezone_label": tz_label(r.get("timezone")),
                 "hora_programada": str(r.get("hora_programada") or ""),
                 "ejecutado_en": r["ejecutado_en"].isoformat() if r.get("ejecutado_en") else None,
                 "finalizado_en": r["finalizado_en"].isoformat() if r.get("finalizado_en") else None,
@@ -339,14 +430,19 @@ def _calculate_next_run(
     interval_minutes: int = 0,
     start_date: Any = None,
     end_date: Any = None,
+    timezone_name: Any = None,
 ) -> datetime | None:
-    """Devuelve el próximo disparo en UTC, o ``None`` si no hay futuro válido."""
-    tz = _local_tz()
+    """Devuelve el próximo disparo en UTC, o ``None`` si no hay futuro válido.
+
+    Las horas (``run_time``) y fechas naive se interpretan en la zona del
+    schedule (``timezone_name``) o, si viene vacía, en la global del servidor.
+    """
+    tz = _resolve_tz(timezone_name)
     now = _now_utc()
     now_local = now.astimezone(tz)
 
-    start = _as_utc(start_date) or now
-    end = _as_utc(end_date, end_of_day=True)
+    start = _as_utc(start_date, tz=tz) or now
+    end = _as_utc(end_date, end_of_day=True, tz=tz)
 
     def _valid(candidate_utc: datetime) -> datetime | None:
         if candidate_utc <= now:
@@ -358,7 +454,7 @@ def _calculate_next_run(
         return candidate_utc
 
     if schedule_type == "once":
-        run_dt = _as_utc(run_date)
+        run_dt = _as_utc(run_date, tz=tz)
         if run_dt is None:
             return None
         hhmm = _parse_hhmm(run_time)
@@ -374,8 +470,7 @@ def _calculate_next_run(
         candidate = now_local.replace(hour=hhmm[0], minute=hhmm[1], second=0, microsecond=0)
         if candidate <= now_local:
             candidate += timedelta(days=1)
-        result = _valid(candidate.astimezone(timezone.utc))
-        return result
+        return _valid(candidate.astimezone(timezone.utc))
 
     if schedule_type == "weekly":
         hhmm = _parse_hhmm(run_time)
@@ -399,7 +494,7 @@ def _calculate_next_run(
         minutes = int(interval_minutes or 0)
         if minutes <= 0:
             return None
-        base = _as_utc(start_date) or now
+        base = _as_utc(start_date, tz=tz) or now
         candidate = base
         while candidate <= now:
             candidate += timedelta(minutes=minutes)
@@ -513,6 +608,7 @@ def _fire_schedule(schedule: dict, now: datetime) -> None:
         int(schedule.get("interval_minutes") or 0),
         schedule.get("start_date"),
         schedule.get("end_date"),
+        timezone_name=schedule.get("timezone"),
     )
 
     # IMPORTANTE: avanzar la programación ANTES de registrar historial.
@@ -543,7 +639,7 @@ def _fire_schedule(schedule: dict, now: datetime) -> None:
                 str(uuid.uuid4()),
                 schedule_id,
                 user_id,
-                now.astimezone(_local_tz()).strftime("%H:%M"),
+                now.astimezone(_resolve_tz(schedule.get("timezone"))).strftime("%H:%M"),
                 now,
                 new_job_id,
                 "Ejecución programada",
@@ -607,7 +703,7 @@ def run_schedule_now(schedule_id: str, user_id: str) -> dict:
                 str(uuid.uuid4()),
                 schedule_id,
                 user_id,
-                now.astimezone(_local_tz()).strftime("%H:%M"),
+                now.astimezone(_resolve_tz(s.get("timezone"))).strftime("%H:%M"),
                 now,
                 created["id"],
             ),
@@ -667,6 +763,11 @@ def _row_to_dict(r: Any) -> dict:
         "last_job_id": str(r["last_job_id"]) if r.get("last_job_id") else None,
         "last_status": r.get("last_status"),
         "is_active": bool(r.get("is_active")),
+        "timezone": r.get("timezone") or "",
+        "timezone_effective": (r.get("timezone") or settings.timezone or "America/Bogota"),
+        "timezone_label": tz_label(r.get("timezone")),
+        "server_timezone": settings.timezone,
+        "server_timezone_label": tz_label(None),
         "job_name": r.get("job_name") or "",
         "job_status": r.get("job_status"),
         "job_deleted": r.get("job_deleted_at") is not None,
