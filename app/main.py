@@ -75,6 +75,13 @@ def startup_scheduler():
     from app.migrations.runner import run_migrations
     run_migrations()
 
+    # Cerrar jobs que quedaron colgados por el reinicio
+    try:
+        from app.services.job_service import recover_stale_jobs
+        recover_stale_jobs()
+    except Exception:
+        logger.exception("No se pudieron cerrar jobs colgados")
+
     start_scheduler()
     # Iniciar scheduler de jobs programados
     from app.services.scheduler_service import start_scheduler_daemon
