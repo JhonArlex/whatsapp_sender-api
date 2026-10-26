@@ -312,7 +312,7 @@ def get_job(job_id: str, user_id: str) -> dict | None:
     )
     schedules = query(
         "SELECT id, schedule_type, run_date, run_time, days_of_week, interval_minutes, "
-        "next_run, last_run, is_active FROM job_schedules "
+        "next_run, last_run, is_active, timezone FROM job_schedules "
         "WHERE job_id = %s ORDER BY created_at DESC",
         (job_id,),
     )
@@ -362,6 +362,7 @@ def get_job(job_id: str, user_id: str) -> dict | None:
                 "next_run": s["next_run"].isoformat() if s.get("next_run") else None,
                 "last_run": s["last_run"].isoformat() if s.get("last_run") else None,
                 "is_active": bool(s.get("is_active")),
+                "timezone": s.get("timezone") or "",
             }
             for s in schedules
         ],

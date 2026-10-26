@@ -2,8 +2,10 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.config import settings
 from app.core.auth import get_current_user
 from app.services.scheduler_service import (
+    SUPPORTED_TIMEZONES,
     create_schedule,
     delete_schedule,
     get_schedule,
@@ -11,10 +13,21 @@ from app.services.scheduler_service import (
     list_schedules,
     run_schedule_now,
     toggle_schedule,
+    tz_label,
     update_schedule,
 )
 
 router = APIRouter(prefix="/api/v1/schedules", tags=["schedules"])
+
+
+@router.get("/timezones")
+def get_timezones(user: dict = Depends(get_current_user)):
+    """Zonas horarias disponibles para programar (Colombia, Chile, ...)."""
+    return {
+        "timezones": SUPPORTED_TIMEZONES,
+        "default": settings.timezone,
+        "default_label": tz_label(None),
+    }
 
 
 @router.get("")
@@ -59,6 +72,7 @@ def add_schedule(body: dict, user: dict = Depends(get_current_user)):
             interval_minutes=int(body.get("interval_minutes") or 0),
             start_date=body.get("start_date"),
             end_date=body.get("end_date"),
+            timezone_name=body.get("timezone"),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
