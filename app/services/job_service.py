@@ -559,7 +559,7 @@ def archive_finished_jobs(
     execute(
         f"UPDATE jobs SET deleted_at = NOW(), deleted_by = %s, "
         f"deleted_reason = 'archivado masivo', updated_at = NOW() WHERE {where_sql}",
-        tuple(params),
+        (user_id, *params),
     )
     # Pausar programaciones cuyos jobs quedaron archivados
     execute(
