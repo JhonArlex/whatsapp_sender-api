@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import threading
@@ -54,6 +55,58 @@ async def _broadcast(job_id: str, event: dict):
 # (borrado lógico) sin afectar el historial de envíos.
 TERMINAL_STATUSES = ("completed", "completed_with_errors", "cancelled", "error")
 
+# Tipos de mensaje que requieren un archivo adjunto
+MEDIA_TYPES = ("image", "video", "document")
+
+
+def _filename_from_url(url: str) -> str:
+    """Extrae el nombre del archivo de una URL tipo /api/v1/message-templates/media/<file>."""
+    clean = (url or "").split("?")[0].split("#")[0].rstrip("/")
+    return clean.rsplit("/", 1)[-1]
+
+
+def _normalize_message(msg: dict) -> tuple[str, str, str, str, str]:
+    """Normaliza un mensaje del payload antes de guardarlo.
+
+    Acepta `media_base64` (compatibilidad con clientes viejos) **o** `media_url`
+    apuntando a un archivo que ya está en MinIO. Lo segundo evita que el
+    navegador re-suba cientos de KB en cada creación de job: el backend resuelve
+    el archivo desde su propio almacenamiento.
+
+    Devuelve (msg_type, content, media_base64, media_mimetype, file_name).
+    """
+    msg_type = (msg.get("msg_type") or "text").strip().lower()
+    content = msg.get("content") or ""
+    b64 = msg.get("media_base64") or ""
+    mimetype = msg.get("media_mimetype") or ""
+    file_name = msg.get("file_name") or ""
+
+    media_url = msg.get("media_url") or ""
+    if not b64 and media_url:
+        filename = _filename_from_url(media_url)
+        found = None
+        if filename:
+            try:
+                from app.services.minio_service import get_file
+
+                found = get_file(filename)
+            except Exception:
+                logger.exception("No se pudo leer %s de MinIO", filename)
+        if found:
+            raw, stored_type = found
+            b64 = base64.b64encode(raw).decode()
+            mimetype = mimetype or stored_type or "image/jpeg"
+            file_name = file_name or filename
+            logger.info("Media resuelta desde MinIO: %s (%s bytes)", filename, len(raw))
+        else:
+            logger.warning("media_url sin archivo en MinIO: %s", media_url)
+
+    if msg_type in MEDIA_TYPES and not b64:
+        logger.warning("Mensaje %s sin archivo resoluble; se enviará como texto", msg_type)
+        msg_type = "text"
+
+    return msg_type, content, b64, mimetype, file_name
+
 
 def create_job(user_id: str, name: str, groups: list[dict], messages: list[dict]) -> dict:
     """Crea un job en BD y arranca el worker."""
@@ -73,12 +126,12 @@ def create_job(user_id: str, name: str, groups: list[dict], messages: list[dict]
         )
 
     for i, msg in enumerate(messages):
+        m_type, m_content, m_b64, m_mime, m_file = _normalize_message(msg)
         execute(
             "INSERT INTO job_messages (job_id, msg_type, content, media_base64, media_mimetype, file_name, sort_order) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (job_id, msg.get("msg_type", "text"), msg.get("content", ""),
-             msg.get("media_base64", ""), msg.get("media_mimetype", ""),
-             msg.get("file_name", ""), i),
+            (job_id, m_type, m_content,
+             m_b64, m_mime, m_file, i),
         )
 
     cancel_event = threading.Event()
